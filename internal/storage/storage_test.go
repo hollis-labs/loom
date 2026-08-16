@@ -35,7 +35,7 @@ func TestMigrateSeedsNaniteIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppliedMigrations: %v", err)
 	}
-	wantApplied := []string{"001_wiki_core", "002_compile_jobs", "003_directives_templates", "004_ingest_ledger", "005_default_template_body", "006_wiki_bundle_page_okf_fields", "007_wiki_links_redesign", "008_wiki_verifications_actor"}
+	wantApplied := []string{"001_wiki_core", "002_compile_jobs", "003_directives_templates", "004_ingest_ledger", "005_default_template_body", "006_wiki_bundle_page_okf_fields", "007_wiki_links_redesign", "008_wiki_verifications_actor", "009_wiki_result_cache"}
 	if len(applied) != len(wantApplied) {
 		t.Fatalf("applied migrations = %+v, want %+v", applied, wantApplied)
 	}

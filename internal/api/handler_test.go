@@ -363,6 +363,98 @@ func TestHTTPPageAndBundleVerifications(t *testing.T) {
 	}
 }
 
+func TestHTTPPageAndBundleConformance(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	mux := http.NewServeMux()
+	api.New(repo, service.NewCompiler(repo)).Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Conformance Page\",\"summary\":\"summary\",\"body\":\"Body\",\"source\":\"test\"}"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compile status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	type report struct {
+		PageID   int64 `json:"page_id"`
+		Passed   bool  `json:"passed"`
+		Findings []struct {
+			Rule    string `json:"rule"`
+			Message string `json:"message"`
+		} `json:"findings"`
+	}
+
+	// Written through the normal compile+upsert path, Type is always
+	// defaulted (storage.Repository.UpsertPage), so this page passes.
+	req = httptest.NewRequest(http.MethodGet, "/api/pages/nanite/conformance-page/conformance", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page conformance status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var got report
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("page conformance json: %v", err)
+	}
+	if !got.Passed || len(got.Findings) != 0 {
+		t.Fatalf("page conformance = %+v, want passed with no findings", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/bundles/nanite/conformance", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bundle conformance status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var bundleReports []report
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundleReports); err != nil {
+		t.Fatalf("bundle conformance json: %v", err)
+	}
+	if len(bundleReports) != 1 || !bundleReports[0].Passed {
+		t.Fatalf("bundle conformance = %+v", bundleReports)
+	}
+
+	// Simulate a page that reached wiki_pages by some route other than
+	// UpsertPage (direct SQL, a legacy row predating the OKF migration)
+	// where Type's write-time default never ran, to prove the checker
+	// actually catches OKF §11 violations rather than always passing now
+	// that Type defaults everywhere in the normal write path.
+	if _, err := repo.DB().ExecContext(ctx, `UPDATE wiki_pages SET type = '' WHERE slug = 'conformance-page'`); err != nil {
+		t.Fatalf("simulate blank type: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/pages/nanite/conformance-page/conformance", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page conformance (blank type) status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("page conformance (blank type) json: %v", err)
+	}
+	if got.Passed || len(got.Findings) == 0 {
+		t.Fatalf("page conformance (blank type) = %+v, want failed with findings", got)
+	}
+	var sawTypeRequired bool
+	for _, f := range got.Findings {
+		if f.Rule == "type_required" {
+			sawTypeRequired = true
+		}
+	}
+	if !sawTypeRequired {
+		t.Fatalf("findings = %+v, want a type_required finding", got.Findings)
+	}
+}
+
 func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))

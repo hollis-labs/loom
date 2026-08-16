@@ -43,9 +43,32 @@ func (c *Compiler) SetLLMProvider(provider llm.Provider, redactPatterns []string
 }
 
 type DirectiveCompileResult struct {
-	Parse   directivex.ParseResponse `json:"parse"`
-	Jobs    []domain.CompileJob      `json:"jobs"`
-	Skipped []string                 `json:"skipped"`
+	Parse directivex.ParseResponse `json:"parse"`
+	Jobs  []domain.CompileJob      `json:"jobs"`
+	// Skipped holds hashes of directives already present in the ledger —
+	// i.e. an idempotent re-parse of content already seen (see
+	// directivex.ParseAndLedger / Directive.New). This is the only
+	// "skip" outcome: every *new* directive is now dispatched to a
+	// handler (see directiveHandlers in directives.go) and either
+	// produces a job or lands in Failed below — nothing is silently
+	// dropped anymore.
+	Skipped []string `json:"skipped"`
+	// Failed holds new directives whose handler could not even start a
+	// compile job (e.g. an explicit ::config generator=<unsupported>
+	// override). Handler-internal compile failures are NOT reported
+	// here — those still produce a "failed"-status CompileJob (see
+	// Compiler.run) and are included in Jobs, consistent with
+	// Compiler.Request's existing job-failure semantics.
+	Failed []DirectiveFailure `json:"failed,omitempty"`
+}
+
+// DirectiveFailure records why one directive's handler failed to produce a
+// compile job at all (see DirectiveCompileResult.Failed).
+type DirectiveFailure struct {
+	Hash    string `json:"hash"`
+	Command string `json:"command"`
+	Line    int    `json:"line"`
+	Reason  string `json:"reason"`
 }
 
 type IngestResult struct {
@@ -77,6 +100,17 @@ func (c *Compiler) Request(ctx context.Context, bundleSlug, generator, input str
 	return c.repo.GetJob(ctx, job.ID)
 }
 
+// RequestFromDirectives parses text for :: directives, ledgers each one
+// (idempotent — see directivex.ParseAndLedger), and dispatches every *new*
+// directive to a handler keyed on its Command (see directiveHandlers in
+// directives.go). A directive whose handler can't even start a compile job
+// (e.g. an unsupported ::config generator=... override) is recorded in
+// Failed rather than silently dropped; a directive whose compile job runs
+// but fails (e.g. a missing template) still shows up in Jobs with
+// Status="failed", same as Compiler.Request always behaved. A lookup
+// failure that isn't specific to one directive (storage.ErrNotFound, e.g.
+// bundleSlug doesn't exist) aborts the whole call, matching Request's own
+// contract.
 func (c *Compiler) RequestFromDirectives(ctx context.Context, bundleSlug, text, source string) (DirectiveCompileResult, error) {
 	parsed, err := directivex.ParseAndLedger(ctx, c.repo, text, source)
 	if err != nil {
@@ -88,28 +122,13 @@ func (c *Compiler) RequestFromDirectives(ctx context.Context, bundleSlug, text, 
 			out.Skipped = append(out.Skipped, d.Hash)
 			continue
 		}
-		generator := d.Config["generator"]
-		if generator == "" {
-			generator = "wiki_page"
-		}
-		if generator != "wiki_page" {
-			out.Skipped = append(out.Skipped, d.Hash)
+		job, err := dispatchDirective(ctx, c, bundleSlug, text, source, d)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return DirectiveCompileResult{}, fmt.Errorf("directive line %d (%s): %w", d.Line, d.Command, err)
+			}
+			out.Failed = append(out.Failed, DirectiveFailure{Hash: d.Hash, Command: d.Command, Line: d.Line, Reason: err.Error()})
 			continue
-		}
-		input, err := json.Marshal(compiler.Request{
-			Title:    directiveTitle(d),
-			Slug:     d.Config["slug"],
-			Summary:  d.Config["summary"],
-			Body:     text,
-			Source:   source,
-			Template: d.Config["template"],
-		})
-		if err != nil {
-			return DirectiveCompileResult{}, err
-		}
-		job, err := c.Request(ctx, bundleSlug, "wiki_page", string(input))
-		if err != nil {
-			return DirectiveCompileResult{}, fmt.Errorf("compile directive line %d: %w", d.Line, err)
 		}
 		out.Jobs = append(out.Jobs, job)
 	}

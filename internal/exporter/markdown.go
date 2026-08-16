@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/hollis-labs/loom/internal/compiler"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/storage"
 )
@@ -75,13 +75,8 @@ func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir
 func pageMarkdown(artifact pageArtifact) string {
 	p := artifact.Page
 	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("slug: " + yamlString(p.Slug) + "\n")
-	b.WriteString("title: " + yamlString(p.Title) + "\n")
-	if p.Summary != "" {
-		b.WriteString("summary: " + yamlString(p.Summary) + "\n")
-	}
-	b.WriteString("---\n\n")
+	b.WriteString(compiler.RenderFrontmatter(p))
+	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(p.Body))
 	b.WriteString("\n")
 	if len(artifact.Links) > 0 {
@@ -103,10 +98,6 @@ func pageMarkdown(artifact pageArtifact) string {
 		}
 	}
 	return b.String()
-}
-
-func yamlString(s string) string {
-	return strconv.Quote(s)
 }
 
 func linkLabel(s string) string {

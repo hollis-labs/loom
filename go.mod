@@ -6,6 +6,7 @@ require github.com/hollis-labs/go-webui v0.1.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
+	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-directives v0.1.0
 	github.com/hollis-labs/go-mcp v0.2.0
@@ -27,7 +28,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

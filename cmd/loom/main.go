@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
+	"github.com/hollis-labs/loom/internal/lint"
 	loomanthropic "github.com/hollis-labs/loom/internal/llm/anthropic"
 	loommcp "github.com/hollis-labs/loom/internal/mcp"
 	loomotel "github.com/hollis-labs/loom/internal/otel"
@@ -180,7 +181,7 @@ func loomRoute(r *http.Request) string {
 			return "/api/bundles/{bundle}"
 		}
 		switch parts[3] {
-		case "pages", "links", "verifications", "compile-jobs", "export":
+		case "pages", "links", "verifications", "conformance", "compile-jobs", "export":
 			return "/api/bundles/{bundle}/" + parts[3]
 		default:
 			return "/api/bundles/{bundle}/*"
@@ -193,7 +194,7 @@ func loomRoute(r *http.Request) string {
 			return "/api/pages/{bundle}/{slug}"
 		}
 		switch parts[4] {
-		case "links", "verifications":
+		case "links", "verifications", "conformance":
 			return "/api/pages/{bundle}/{slug}/" + parts[4]
 		default:
 			return "/api/pages/{bundle}/{slug}/*"
@@ -328,7 +329,7 @@ func bundlesCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: loom bundles list|get|put")
+		return fmt.Errorf("usage: loom bundles list|get|put|conformance")
 	}
 	switch args[0] {
 	case "list":
@@ -378,8 +379,29 @@ func bundlesCLI(ctx context.Context, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(bundle)
+	case "conformance":
+		fs := flag.NewFlagSet("bundles conformance", flag.ExitOnError)
+		limit := fs.Int("limit", 100, "maximum pages to check")
+		_ = fs.Parse(args[1:])
+		if len(fs.Args()) != 1 {
+			return fmt.Errorf("usage: loom bundles conformance [-limit 100] <slug>")
+		}
+		repo, _, cleanup, err := openApp(ctx, appArgs)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		b, err := repo.GetBundle(ctx, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		pages, err := repo.ListPages(ctx, b.ID, "", *limit)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(lint.CheckBundle(pages))
 	default:
-		return fmt.Errorf("usage: loom bundles list|get|put")
+		return fmt.Errorf("usage: loom bundles list|get|put|conformance")
 	}
 }
 
@@ -475,7 +497,7 @@ func pagesCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 	switch args[0] {
 	case "list":
@@ -498,10 +520,10 @@ func pagesCLI(ctx context.Context, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(pages)
-	case "get", "links", "verifications":
+	case "get", "links", "verifications", "conformance":
 		return pageDetailCLI(ctx, appArgs, args[0], args[1:])
 	default:
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 }
 
@@ -536,8 +558,10 @@ func pageDetailCLI(ctx context.Context, appArgs []string, cmd string, args []str
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(verifications)
+	case "conformance":
+		return json.NewEncoder(os.Stdout).Encode(lint.CheckPage(page))
 	default:
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 }
 
