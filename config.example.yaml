@@ -1,0 +1,33 @@
+paths:
+  corpus_dir: ~/.local/share/loom/corpus
+  export_dir: ~/.local/share/loom/exports
+  media_dir: ~/.local/share/loom/media
+
+sources:
+  git:
+    - name: loom
+      path: ~/dev/hollis-labs/apps/loom
+      exclude_paths: [".git", "node_modules", "dist"]
+  claude_logs: ~/.claude
+  chatgpt_local: ""
+  chatgpt_md: ""
+  chatgpt_exports: ""
+  nanite_vaults: []
+  external: []
+
+drafts:
+  provider: deterministic
+  model: ""
+  command: ""
+  window: 7d
+
+ingest:
+  since: "1970-01-01"
+
+nanite:
+  base_url: http://127.0.0.1:8080
+  vault: default
+
+filters:
+  redact_patterns: []
+  git_exclude_paths: [".git", "node_modules", "dist"]
