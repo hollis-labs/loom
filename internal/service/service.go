@@ -10,15 +10,36 @@ import (
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/ingest"
+	"github.com/hollis-labs/loom/internal/llm"
 	"github.com/hollis-labs/loom/internal/storage"
 )
 
 type Compiler struct {
-	repo *storage.Repository
+	repo              *storage.Repository
+	llmProvider       llm.Provider
+	llmRedactPatterns []string
 }
 
 func NewCompiler(repo *storage.Repository) *Compiler {
 	return &Compiler{repo: repo}
+}
+
+// SetLLMProvider configures the LLM provider used for compile jobs
+// requesting generation_mode=llm (compiler.GenerationModeLLM). When unset,
+// such jobs fail with a descriptive error from CompileWikiPageWithLLM
+// rather than silently falling back to the deterministic compiler; the
+// deterministic path (the default) never requires a provider.
+//
+// redactPatterns are the user-configured redaction patterns
+// (config.Filters.RedactPatterns) to apply, in addition to llm's baseline
+// defaultRedactors, to a job's body before it is sent to provider.Generate
+// (see CompileWikiPageWithLLM and llm.RedactWithPatterns). This is the same
+// config-driven mechanism internal/ingest already applies on the ingest
+// path; passing it here ensures LLM-bound content gets the same
+// user-configured secret/PII protection.
+func (c *Compiler) SetLLMProvider(provider llm.Provider, redactPatterns []string) {
+	c.llmProvider = provider
+	c.llmRedactPatterns = redactPatterns
 }
 
 type DirectiveCompileResult struct {
@@ -162,12 +183,23 @@ func (c *Compiler) run(ctx context.Context, job domain.CompileJob) error {
 	if err := c.repo.UpdateJob(ctx, job.ID, "running", "", ""); err != nil {
 		return err
 	}
-	_ = c.repo.AddEvent(ctx, job.ID, "running", "deterministic compiler started")
+	mode := compiler.RequestGenerationMode(job.Input)
+	startMsg := "deterministic compiler started"
+	if mode == compiler.GenerationModeLLM {
+		startMsg = "llm compiler started"
+	}
+	_ = c.repo.AddEvent(ctx, job.ID, "running", startMsg)
 	templateBody, err := c.templateBody(ctx, job.Input)
 	if err != nil {
 		return err
 	}
-	result, err := compiler.CompileWikiPageWithTemplate(job.BundleID, job.Input, templateBody)
+	var result compiler.Result
+	switch mode {
+	case compiler.GenerationModeLLM:
+		result, err = compiler.CompileWikiPageWithLLM(ctx, c.llmProvider, job.BundleID, job.Input, templateBody, c.llmRedactPatterns)
+	default:
+		result, err = compiler.CompileWikiPageWithTemplate(job.BundleID, job.Input, templateBody)
+	}
 	if err != nil {
 		return err
 	}

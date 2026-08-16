@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
+	loomanthropic "github.com/hollis-labs/loom/internal/llm/anthropic"
 	loommcp "github.com/hollis-labs/loom/internal/mcp"
 	loomotel "github.com/hollis-labs/loom/internal/otel"
 	loomserver "github.com/hollis-labs/loom/internal/server"
@@ -29,6 +30,11 @@ import (
 	"github.com/hollis-labs/loom/internal/storage"
 	"github.com/hollis-labs/loom/internal/webui"
 )
+
+// defaultLLMModel is used when ANTHROPIC_API_KEY is set but cfg.LLM.Model
+// is left blank, so generation_mode=llm compile jobs work out of the box
+// with just an API key.
+const defaultLLMModel = "claude-sonnet-4-6"
 
 const version = "0.1.0"
 
@@ -836,7 +842,45 @@ func openApp(ctx context.Context, args []string) (*storage.Repository, *service.
 		return nil, nil, nil, err
 	}
 	repo := storage.NewRepository(db)
-	return repo, service.NewCompiler(repo), func() { _ = db.Close() }, nil
+	comp := service.NewCompiler(repo)
+	if err := configureLLMProvider(comp, layout); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	return repo, comp, func() { _ = db.Close() }, nil
+}
+
+// configureLLMProvider wires an Anthropic-backed llm.Provider into comp
+// whenever ANTHROPIC_API_KEY is present in the environment, so compile jobs
+// with generation_mode=llm work without extra setup. It is a no-op (and
+// leaves generation_mode=llm jobs failing with a clear error from
+// compiler.CompileWikiPageWithLLM) when no API key is set - the
+// deterministic compiler path never depends on this.
+//
+// It also passes the loaded config's cfg.Filters.RedactPatterns through to
+// comp.SetLLMProvider, so user-configured redaction patterns (the same
+// mechanism internal/ingest applies on the ingest path) are applied to job
+// bodies before they are sent to the LLM Provider, in addition to
+// internal/llm's baseline secret-shaped redactors.
+func configureLLMProvider(comp *service.Compiler, layout paths.Layout) error {
+	apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	if apiKey == "" {
+		return nil
+	}
+	cfg, _, err := loomconfig.Load(layout, "config.yaml")
+	if err != nil {
+		return err
+	}
+	model := strings.TrimSpace(cfg.LLM.Model)
+	if model == "" {
+		model = defaultLLMModel
+	}
+	provider, err := loomanthropic.New(apiKey, model)
+	if err != nil {
+		return err
+	}
+	comp.SetLLMProvider(provider, cfg.Filters.RedactPatterns)
+	return nil
 }
 
 func splitAppArgs(args []string) ([]string, []string, error) {

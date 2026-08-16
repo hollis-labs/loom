@@ -21,6 +21,7 @@ type Config struct {
 	Ingest  IngestConfig `yaml:"ingest" json:"ingest"`
 	Nanite  NaniteConfig `yaml:"nanite" json:"nanite"`
 	Filters FilterConfig `yaml:"filters" json:"filters"`
+	LLM     LLMConfig    `yaml:"llm" json:"llm"`
 }
 
 type PathConfig struct {
@@ -64,6 +65,22 @@ type NaniteConfig struct {
 type FilterConfig struct {
 	RedactPatterns []string `yaml:"redact_patterns" json:"redact_patterns"`
 	GitExcludePath []string `yaml:"git_exclude_paths" json:"git_exclude_paths"`
+}
+
+// LLMConfig configures the LLM Provider (internal/llm) used for compile
+// jobs requesting generation_mode=llm (see compiler.GenerationMode). It is
+// only consulted when an LLM provider can actually be constructed (e.g. an
+// ANTHROPIC_API_KEY is present); Provider/Model may be left blank to use
+// the wiring layer's defaults.
+type LLMConfig struct {
+	// Provider selects the LLM backend, e.g. "anthropic". Currently
+	// informational: cmd/loom wires an Anthropic provider whenever
+	// ANTHROPIC_API_KEY is set, regardless of this value.
+	Provider string `yaml:"provider" json:"provider"`
+	// Model is the provider-specific model identifier (e.g.
+	// "claude-sonnet-4-6"). Left blank, callers fall back to a built-in
+	// default model.
+	Model string `yaml:"model" json:"model"`
 }
 
 func Default(layout paths.Layout) Config {
