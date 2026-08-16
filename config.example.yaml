@@ -31,3 +31,11 @@ nanite:
 filters:
   redact_patterns: []
   git_exclude_paths: [".git", "node_modules", "dist"]
+
+# Used only for compile jobs requesting generation_mode=llm; the
+# deterministic compiler (the default) never reads this section. Loom also
+# requires an ANTHROPIC_API_KEY environment variable to actually construct
+# an LLM provider - model here is just which model that provider uses.
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
