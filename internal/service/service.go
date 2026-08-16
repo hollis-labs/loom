@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/loom/internal/compiler"
 	"github.com/hollis-labs/loom/internal/directivex"
@@ -222,15 +223,50 @@ func (c *Compiler) run(ctx context.Context, job domain.CompileJob) error {
 	if err != nil {
 		return err
 	}
+	existing, err := c.existingPage(ctx, job.BundleID, result.Page)
+	if err != nil {
+		return err
+	}
 	page, err := c.repo.UpsertPage(ctx, result.Page)
 	if err != nil {
 		return err
 	}
-	data, _ := json.Marshal(map[string]any{"page": page})
+	data, err := json.Marshal(buildCompileOutput(existing, page))
+	if err != nil {
+		return err
+	}
 	if err := c.repo.UpdateJob(ctx, job.ID, "completed", string(data), ""); err != nil {
 		return err
 	}
 	return c.repo.AddEvent(ctx, job.ID, "completed", "wiki page stored")
+}
+
+// existingPage looks up the page (if any) that result.Page's compile is
+// about to overwrite at bundleID+result.Page.Slug, BEFORE UpsertPage
+// runs — this is the only point in the compile flow where "what did this
+// page look like right before this write" is still observable (see
+// buildCompileOutput in confidence.go). It normalizes the slug the same
+// way storage.Repository.UpsertPage does, since compiler.Result.Page.Slug
+// may still hold an un-sluggified caller-supplied slug at this point (the
+// deterministic/LLM compilers only run storage.Slug over an empty slug's
+// fallback-from-title, never over an explicit one). A not-found lookup is
+// the common case (most compiles create a new page) and returns (nil,
+// nil), not an error.
+func (c *Compiler) existingPage(ctx context.Context, bundleID int64, p domain.Page) (*domain.Page, error) {
+	slug := strings.TrimSpace(p.Slug)
+	if slug == "" {
+		slug = storage.Slug(p.Title)
+	} else {
+		slug = storage.Slug(slug)
+	}
+	existing, err := c.repo.GetPageByBundleSlug(ctx, bundleID, slug)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &existing, nil
 }
 
 func (c *Compiler) templateBody(ctx context.Context, raw string) (string, error) {

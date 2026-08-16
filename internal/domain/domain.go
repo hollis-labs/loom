@@ -102,6 +102,61 @@ type CompileJob struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// DiffSummary describes how a compiled page's new body compares to the page
+// that already existed at the same bundle+slug, if any (see
+// CompileOutput.Diff). It is computed once, in service.Compiler.run, from
+// the pre-write state of the existing page — i.e. before
+// storage.Repository.UpsertPage overwrites it — since that's the only point
+// in the compile flow where "what did this page look like right before this
+// write" is still observable.
+type DiffSummary struct {
+	OldContentHash string `json:"old_content_hash"`
+	NewContentHash string `json:"new_content_hash"`
+	OldLineCount   int    `json:"old_line_count"`
+	NewLineCount   int    `json:"new_line_count"`
+	// LineDelta is NewLineCount - OldLineCount (positive = grew, negative =
+	// shrank).
+	LineDelta int `json:"line_delta"`
+	// SimilarityRatio is 2*|LCS(oldLines,newLines)| / (OldLineCount +
+	// NewLineCount), the same line-based ratio classic diff tools (e.g.
+	// Python's difflib.SequenceMatcher) use to describe "how much of the
+	// two sequences matches" — 1.0 means the bodies are line-identical
+	// (or both empty), 0.0 means they share no lines at all. See
+	// internal/service/confidence.go for the full heuristic this feeds.
+	SimilarityRatio float64 `json:"similarity_ratio"`
+	// UnifiedDiff is a single-hunk unified-diff-style rendering (---/+++/@@
+	// header, then full-context " "/"-"/"+" prefixed lines) of old vs new
+	// body. Left empty when OldContentHash == NewContentHash (nothing to
+	// show) or when the bodies are too large to diff cheaply (see
+	// maxDiffCells in internal/service/confidence.go) — callers should
+	// treat an empty UnifiedDiff as "not computed", not "no changes",
+	// unless SimilarityRatio is also 1.0.
+	UnifiedDiff string `json:"unified_diff,omitempty"`
+}
+
+// CompileOutput is the JSON shape marshaled into CompileJob.Output for a
+// successful wiki_page compile (see service.Compiler.run). Confidence and
+// ConfidenceTier are a heuristic safety signal — not a guarantee — meant
+// for a caller (e.g. Nanite's Curator, CW-20260816-0020) deciding whether
+// to accept this compile's write directly or stage it for review; see
+// internal/service/confidence.go for the exact formula and reasoning. Diff
+// is nil when PageExisted is false: a new page can't conflict with
+// anything, so there's nothing to compare against.
+type CompileOutput struct {
+	Page Page `json:"page"`
+	// PageExisted reports whether a page already lived at this
+	// bundle+slug before this compile's write.
+	PageExisted bool `json:"page_existed"`
+	// Confidence is 0.0-1.0: how safe this write is to accept without
+	// human review. 1.0 for a brand-new page or a no-op (content_hash
+	// unchanged) overwrite; otherwise equal to Diff.SimilarityRatio.
+	Confidence float64 `json:"confidence"`
+	// ConfidenceTier buckets Confidence into "high" (>=0.85), "medium"
+	// (>=0.50), or "low" (<0.50) — see confidenceTierHigh/Medium/Low.
+	ConfidenceTier string       `json:"confidence_tier"`
+	Diff           *DiffSummary `json:"diff,omitempty"`
+}
+
 type CompileEvent struct {
 	ID        int64     `json:"id"`
 	JobID     int64     `json:"job_id"`
