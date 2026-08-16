@@ -357,16 +357,17 @@ func bundlesCLI(ctx context.Context, args []string) error {
 		slug := fs.String("slug", "", "bundle slug")
 		title := fs.String("title", "", "bundle title")
 		description := fs.String("description", "", "bundle description")
+		scope := fs.String("scope", "", "bundle scope (project|meta|personal)")
 		_ = fs.Parse(args[1:])
 		if *slug == "" || *title == "" {
-			return fmt.Errorf("usage: loom bundles put -slug slug -title title [-description text]")
+			return fmt.Errorf("usage: loom bundles put -slug slug -title title [-description text] [-scope project|meta|personal]")
 		}
 		repo, _, cleanup, err := openApp(ctx, appArgs)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-		bundle, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: *slug, Title: *title, Description: *description})
+		bundle, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: *slug, Title: *title, Description: *description, Scope: *scope})
 		if err != nil {
 			return err
 		}

@@ -3,18 +3,29 @@ package compiler
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/storage"
 )
 
+// GeneratedBy identifies Loom's deterministic compiler as the "producer" actor
+// for OKF's trust family (domain.Page.GeneratedBy).
+const GeneratedBy = "loom-compiler"
+
 type Request struct {
-	Title    string `json:"title"`
-	Slug     string `json:"slug"`
-	Summary  string `json:"summary"`
-	Body     string `json:"body"`
-	Source   string `json:"source"`
-	Template string `json:"template"`
+	Title string `json:"title"`
+	Slug  string `json:"slug"`
+	// Type is OKF's one REQUIRED field (open vocabulary). Defaults to "note"
+	// in the repository layer when left blank.
+	Type    string `json:"type"`
+	Summary string `json:"summary"`
+	// Description is OKF's frontmatter field for page description; defaults
+	// to Summary in the repository layer when left blank.
+	Description string `json:"description"`
+	Body        string `json:"body"`
+	Source      string `json:"source"`
+	Template    string `json:"template"`
 }
 
 type Result struct {
@@ -46,13 +57,18 @@ func CompileWikiPageWithTemplate(bundleID int64, raw, templateBody string) (Resu
 		req.Summary = summarize(req.Body)
 	}
 	body := renderBody(req, templateBody)
+	now := time.Now().UTC()
 	return Result{Page: domain.Page{
-		BundleID: bundleID,
-		Slug:     req.Slug,
-		Title:    req.Title,
-		Summary:  req.Summary,
-		Body:     body,
-		Source:   req.Source,
+		BundleID:    bundleID,
+		Slug:        req.Slug,
+		Type:        req.Type,
+		Title:       req.Title,
+		Summary:     req.Summary,
+		Description: req.Description,
+		Body:        body,
+		Source:      req.Source,
+		GeneratedBy: GeneratedBy,
+		GeneratedAt: &now,
 	}}, nil
 }
 

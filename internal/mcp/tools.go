@@ -59,11 +59,12 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return budget.ToolJSON(item), nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_put", Description: "Create or update a Loom wiki bundle.", InputSchema: obj(map[string]any{"slug": str(), "title": str(), "description": str()}, "slug", "title"), Handler: func(ctx context.Context, args map[string]any) (string, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_put", Description: "Create or update a Loom wiki bundle.", InputSchema: obj(map[string]any{"slug": str(), "title": str(), "description": str(), "scope": str()}, "slug", "title"), Handler: func(ctx context.Context, args map[string]any) (string, error) {
 		item, err := repo.UpsertBundle(ctx, domain.Bundle{
 			Slug:        stringArg(args, "slug", ""),
 			Title:       stringArg(args, "title", ""),
 			Description: stringArg(args, "description", ""),
+			Scope:       stringArg(args, "scope", ""),
 		})
 		if err != nil {
 			return "", err

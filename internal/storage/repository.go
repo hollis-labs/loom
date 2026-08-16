@@ -2,7 +2,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -63,36 +66,31 @@ func (r *Repository) Stats(ctx context.Context) (domain.RepositoryStats, error) 
 	return stats, nil
 }
 
+const bundleColumns = `id, slug, title, description, scope, COALESCE(okf_export_path, ''), created_at, updated_at`
+
 func (r *Repository) ListBundles(ctx context.Context) ([]domain.Bundle, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, slug, title, description, created_at, updated_at FROM wiki_bundles ORDER BY slug`)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles ORDER BY slug`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	out := make([]domain.Bundle, 0)
 	for rows.Next() {
-		var b domain.Bundle
-		var created, updated string
-		if err := rows.Scan(&b.ID, &b.Slug, &b.Title, &b.Description, &created, &updated); err != nil {
+		b, err := scanBundle(rows)
+		if err != nil {
 			return nil, err
 		}
-		b.CreatedAt = parseDBTime(created)
-		b.UpdatedAt = parseDBTime(updated)
 		out = append(out, b)
 	}
 	return out, rows.Err()
 }
 
 func (r *Repository) GetBundle(ctx context.Context, slug string) (domain.Bundle, error) {
-	var b domain.Bundle
-	var created, updated string
-	err := r.db.QueryRowContext(ctx, `SELECT id, slug, title, description, created_at, updated_at FROM wiki_bundles WHERE slug = ?`, slug).
-		Scan(&b.ID, &b.Slug, &b.Title, &b.Description, &created, &updated)
+	row := r.db.QueryRowContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles WHERE slug = ?`, slug)
+	b, err := scanBundle(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Bundle{}, ErrNotFound
 	}
-	b.CreatedAt = parseDBTime(created)
-	b.UpdatedAt = parseDBTime(updated)
 	return b, err
 }
 
@@ -104,14 +102,20 @@ func (r *Repository) UpsertBundle(ctx context.Context, b domain.Bundle) (domain.
 	if b.Slug == "" || strings.TrimSpace(b.Title) == "" {
 		return domain.Bundle{}, fmt.Errorf("%w: bundle slug and title are required", ErrInvalid)
 	}
+	scope := strings.TrimSpace(b.Scope)
+	if scope == "" {
+		scope = "project"
+	}
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO wiki_bundles (slug, title, description)
-VALUES (?, ?, ?)
+INSERT INTO wiki_bundles (slug, title, description, scope, okf_export_path)
+VALUES (?, ?, ?, ?, NULLIF(?, ''))
 ON CONFLICT(slug) DO UPDATE SET
 	title = excluded.title,
 	description = excluded.description,
+	scope = excluded.scope,
+	okf_export_path = excluded.okf_export_path,
 	updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		b.Slug, strings.TrimSpace(b.Title), strings.TrimSpace(b.Description))
+		b.Slug, strings.TrimSpace(b.Title), strings.TrimSpace(b.Description), scope, strings.TrimSpace(b.OKFExportPath))
 	if err != nil {
 		return domain.Bundle{}, err
 	}
@@ -128,21 +132,59 @@ func (r *Repository) UpsertPage(ctx context.Context, p domain.Page) (domain.Page
 	if p.Slug == "" || p.Title == "" {
 		return domain.Page{}, fmt.Errorf("%w: page slug and title are required", ErrInvalid)
 	}
+	if strings.TrimSpace(p.Type) == "" {
+		p.Type = "note"
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		p.Path = p.Slug + ".md"
+	}
+	if strings.TrimSpace(p.Status) == "" {
+		p.Status = "active"
+	}
+	if strings.TrimSpace(p.Description) == "" {
+		p.Description = p.Summary
+	}
+	if len(p.Sources) == 0 && strings.TrimSpace(p.Source) != "" {
+		p.Sources = []string{p.Source}
+	}
+	p.ContentHash = contentHash(p.Body)
+	tagsJSON := marshalStrings(p.Tags)
+	sourcesJSON := marshalStrings(p.Sources)
+	fragmentIDsJSON := marshalInt64s(p.SourceFragmentIDs)
+	var staleAfter, generatedAt any
+	if p.StaleAfter != nil {
+		staleAfter = p.StaleAfter.UTC().Format(time.RFC3339Nano)
+	}
+	if p.GeneratedAt != nil {
+		generatedAt = p.GeneratedAt.UTC().Format(time.RFC3339Nano)
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Page{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO wiki_pages (bundle_id, slug, title, summary, body, source)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO wiki_pages (bundle_id, slug, path, type, title, summary, description, tags, status, stale_after, generated_by, generated_at, body, source, sources, content_hash, source_fragment_ids)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(bundle_id, slug) DO UPDATE SET
+	path = excluded.path,
+	type = excluded.type,
 	title = excluded.title,
 	summary = excluded.summary,
+	description = excluded.description,
+	tags = excluded.tags,
+	status = excluded.status,
+	stale_after = excluded.stale_after,
+	generated_by = excluded.generated_by,
+	generated_at = excluded.generated_at,
 	body = excluded.body,
 	source = excluded.source,
+	sources = excluded.sources,
+	content_hash = excluded.content_hash,
+	source_fragment_ids = excluded.source_fragment_ids,
 	updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		p.BundleID, p.Slug, p.Title, p.Summary, p.Body, p.Source)
+		p.BundleID, p.Slug, p.Path, p.Type, p.Title, p.Summary, p.Description, tagsJSON, p.Status, staleAfter, p.GeneratedBy, generatedAt, p.Body, p.Source, sourcesJSON, p.ContentHash, fragmentIDsJSON)
 	if err != nil {
 		return domain.Page{}, err
 	}
@@ -150,12 +192,21 @@ ON CONFLICT(bundle_id, slug) DO UPDATE SET
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, p.BundleID, p.Slug).Scan(&pageID); err != nil {
 		return domain.Page{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM wiki_links WHERE page_id = ?`, pageID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM wiki_links WHERE from_page_id = ?`, pageID); err != nil {
 		return domain.Page{}, err
 	}
 	links := wiki.ExtractLinks(p.Body)
 	for _, link := range links {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO wiki_links (page_id, target, kind, label, position) VALUES (?, ?, ?, ?, ?)`, pageID, link.Target, link.Kind, link.Label, link.Position); err != nil {
+		toPageID, err := resolveLinkTarget(ctx, tx, p.BundleID, link)
+		if err != nil {
+			return domain.Page{}, err
+		}
+		relation := strings.TrimSpace(link.Relation)
+		if relation == "" {
+			relation = "references"
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO wiki_links (from_page_id, to_page_id, relation, target, kind, label, position) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			pageID, toPageID, relation, link.Target, link.Kind, link.Label, link.Position); err != nil {
 			return domain.Page{}, err
 		}
 	}
@@ -164,7 +215,8 @@ ON CONFLICT(bundle_id, slug) DO UPDATE SET
 	}
 	p.ID = pageID
 	for _, verification := range wiki.VerifyPage(p, links) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO wiki_verifications (page_id, kind, status, message) VALUES (?, ?, ?, ?)`, pageID, verification.Kind, verification.Status, verification.Message); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO wiki_verifications (page_id, kind, status, message, "by") VALUES (?, ?, ?, ?, ?)`,
+			pageID, verification.Kind, verification.Status, verification.Message, verification.By); err != nil {
 			return domain.Page{}, err
 		}
 	}
@@ -174,12 +226,31 @@ ON CONFLICT(bundle_id, slug) DO UPDATE SET
 	return r.GetPageByBundleSlug(ctx, p.BundleID, p.Slug)
 }
 
+// resolveLinkTarget resolves an internal ("wiki") link's target slug to a
+// sibling page id in the same bundle. External URLs and anchors never
+// resolve; internal links that don't match a known page also stay
+// unresolved (nil), matching the migration's best-effort backfill.
+func resolveLinkTarget(ctx context.Context, tx *sql.Tx, bundleID int64, link domain.Link) (sql.NullInt64, error) {
+	if link.Kind != "wiki" {
+		return sql.NullInt64{}, nil
+	}
+	var resolved int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, bundleID, link.Target).Scan(&resolved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.NullInt64{}, nil
+	}
+	if err != nil {
+		return sql.NullInt64{}, err
+	}
+	return sql.NullInt64{Int64: resolved, Valid: true}, nil
+}
+
 func (r *Repository) ListPages(ctx context.Context, bundleID int64, query string, limit int) ([]domain.Page, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	args := []any{bundleID}
-	stmt := `SELECT id, bundle_id, slug, title, summary, body, source, created_at, updated_at FROM wiki_pages WHERE bundle_id = ?`
+	stmt := `SELECT ` + pageColumns + ` FROM wiki_pages WHERE bundle_id = ?`
 	if strings.TrimSpace(query) != "" {
 		stmt += ` AND (slug LIKE ? OR title LIKE ? OR summary LIKE ? OR body LIKE ?)`
 		q := "%" + query + "%"
@@ -212,7 +283,7 @@ func (r *Repository) GetPageBySlug(ctx context.Context, bundleSlug, pageSlug str
 }
 
 func (r *Repository) GetPageByBundleSlug(ctx context.Context, bundleID int64, pageSlug string) (domain.Page, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, bundle_id, slug, title, summary, body, source, created_at, updated_at FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, bundleID, pageSlug)
+	row := r.db.QueryRowContext(ctx, `SELECT `+pageColumns+` FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, bundleID, pageSlug)
 	p, err := scanPage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Page{}, ErrNotFound
@@ -221,7 +292,7 @@ func (r *Repository) GetPageByBundleSlug(ctx context.Context, bundleID int64, pa
 }
 
 func (r *Repository) ListPageLinks(ctx context.Context, pageID int64) ([]domain.Link, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, page_id, target, kind, label, position FROM wiki_links WHERE page_id = ? ORDER BY position, id`, pageID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, from_page_id, to_page_id, relation, target, kind, label, position FROM wiki_links WHERE from_page_id = ? ORDER BY position, id`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,9 +313,9 @@ func (r *Repository) ListBundleLinks(ctx context.Context, bundleID int64, limit 
 		limit = 100
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT l.id, l.page_id, l.target, l.kind, l.label, l.position
+SELECT l.id, l.from_page_id, l.to_page_id, l.relation, l.target, l.kind, l.label, l.position
 FROM wiki_links l
-JOIN wiki_pages p ON p.id = l.page_id
+JOIN wiki_pages p ON p.id = l.from_page_id
 WHERE p.bundle_id = ?
 ORDER BY p.slug, l.position, l.id
 LIMIT ?`, bundleID, limit)
@@ -264,7 +335,7 @@ LIMIT ?`, bundleID, limit)
 }
 
 func (r *Repository) ListPageVerifications(ctx context.Context, pageID int64) ([]domain.Verification, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, page_id, kind, status, message, created_at FROM wiki_verifications WHERE page_id = ? ORDER BY id`, pageID)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, page_id, kind, status, message, "by", created_at FROM wiki_verifications WHERE page_id = ? ORDER BY id`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +356,7 @@ func (r *Repository) ListBundleVerifications(ctx context.Context, bundleID int64
 		limit = 100
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT v.id, v.page_id, v.kind, v.status, v.message, v.created_at
+SELECT v.id, v.page_id, v.kind, v.status, v.message, v."by", v.created_at
 FROM wiki_verifications v
 JOIN wiki_pages p ON p.id = v.page_id
 WHERE p.bundle_id = ?
@@ -538,27 +609,118 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+const pageColumns = `id, bundle_id, slug, path, type, title, summary, description, tags, status, stale_after, generated_by, generated_at, body, source, sources, content_hash, source_fragment_ids, created_at, updated_at`
+
+func scanBundle(s scanner) (domain.Bundle, error) {
+	var b domain.Bundle
+	var created, updated string
+	err := s.Scan(&b.ID, &b.Slug, &b.Title, &b.Description, &b.Scope, &b.OKFExportPath, &created, &updated)
+	if err != nil {
+		return domain.Bundle{}, err
+	}
+	b.CreatedAt = parseDBTime(created)
+	b.UpdatedAt = parseDBTime(updated)
+	return b, nil
+}
+
 func scanPage(s scanner) (domain.Page, error) {
 	var p domain.Page
 	var created, updated string
-	err := s.Scan(&p.ID, &p.BundleID, &p.Slug, &p.Title, &p.Summary, &p.Body, &p.Source, &created, &updated)
+	var staleAfter, generatedAt sql.NullString
+	var tagsJSON, sourcesJSON, fragmentIDsJSON string
+	err := s.Scan(&p.ID, &p.BundleID, &p.Slug, &p.Path, &p.Type, &p.Title, &p.Summary, &p.Description, &tagsJSON,
+		&p.Status, &staleAfter, &p.GeneratedBy, &generatedAt, &p.Body, &p.Source, &sourcesJSON, &p.ContentHash,
+		&fragmentIDsJSON, &created, &updated)
+	if err != nil {
+		return domain.Page{}, err
+	}
 	p.CreatedAt = parseDBTime(created)
 	p.UpdatedAt = parseDBTime(updated)
-	return p, err
+	if staleAfter.Valid && staleAfter.String != "" {
+		t := parseDBTime(staleAfter.String)
+		p.StaleAfter = &t
+	}
+	if generatedAt.Valid && generatedAt.String != "" {
+		t := parseDBTime(generatedAt.String)
+		p.GeneratedAt = &t
+	}
+	p.Tags = unmarshalStrings(tagsJSON)
+	p.Sources = unmarshalStrings(sourcesJSON)
+	p.SourceFragmentIDs = unmarshalInt64s(fragmentIDsJSON)
+	return p, nil
 }
 
 func scanLink(s scanner) (domain.Link, error) {
 	var link domain.Link
-	err := s.Scan(&link.ID, &link.PageID, &link.Target, &link.Kind, &link.Label, &link.Position)
-	return link, err
+	var toPageID sql.NullInt64
+	err := s.Scan(&link.ID, &link.FromPageID, &toPageID, &link.Relation, &link.Target, &link.Kind, &link.Label, &link.Position)
+	if err != nil {
+		return domain.Link{}, err
+	}
+	if toPageID.Valid {
+		v := toPageID.Int64
+		link.ToPageID = &v
+	}
+	return link, nil
 }
 
 func scanVerification(s scanner) (domain.Verification, error) {
 	var verification domain.Verification
 	var created string
-	err := s.Scan(&verification.ID, &verification.PageID, &verification.Kind, &verification.Status, &verification.Message, &created)
+	err := s.Scan(&verification.ID, &verification.PageID, &verification.Kind, &verification.Status, &verification.Message, &verification.By, &created)
 	verification.CreatedAt = parseDBTime(created)
 	return verification, err
+}
+
+// contentHash returns the hex-encoded sha256 of a page body, mirroring FE's
+// existing fragment dedup convention.
+func contentHash(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+func marshalStrings(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func unmarshalStrings(raw string) []string {
+	out := make([]string, 0)
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || out == nil {
+		return make([]string, 0)
+	}
+	return out
+}
+
+func marshalInt64s(items []int64) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func unmarshalInt64s(raw string) []int64 {
+	out := make([]int64, 0)
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || out == nil {
+		return make([]int64, 0)
+	}
+	return out
 }
 
 func scanDirective(s scanner) (domain.LedgerEntry, error) {

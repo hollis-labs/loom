@@ -74,11 +74,12 @@ func (h *Handler) bundles(w http.ResponseWriter, r *http.Request) {
 			Slug        string `json:"slug"`
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			Scope       string `json:"scope"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: req.Slug, Title: req.Title, Description: req.Description})
+		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: req.Slug, Title: req.Title, Description: req.Description, Scope: req.Scope})
 		respond(w, bundle, err)
 	default:
 		method(w)
@@ -99,11 +100,12 @@ func (h *Handler) bundle(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			Scope       string `json:"scope"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: parts[0], Title: req.Title, Description: req.Description})
+		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: parts[0], Title: req.Title, Description: req.Description, Scope: req.Scope})
 		respond(w, bundle, err)
 	case len(parts) == 2 && parts[1] == "pages" && r.Method == http.MethodGet:
 		b, err := h.repo.GetBundle(r.Context(), parts[0])
