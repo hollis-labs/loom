@@ -106,6 +106,9 @@ func (r *Repository) UpsertBundle(ctx context.Context, b domain.Bundle) (domain.
 	if scope == "" {
 		scope = "project"
 	}
+	if scope != "project" && scope != "meta" && scope != "personal" {
+		return domain.Bundle{}, fmt.Errorf("%w: bundle scope must be one of project|meta|personal, got %q", ErrInvalid, scope)
+	}
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO wiki_bundles (slug, title, description, scope, okf_export_path)
 VALUES (?, ?, ?, ?, NULLIF(?, ''))

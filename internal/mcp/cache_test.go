@@ -210,3 +210,29 @@ func TestCacheListResult_NilCacheIsNoOp(t *testing.T) {
 		t.Fatalf("nil cache must never produce a cache pointer, got: %s", out)
 	}
 }
+
+func TestCacheListResult_NoCacheForDefaultCallerID(t *testing.T) {
+	cache, _ := setupCacheTest(t, ResultCacheConfig{SoftTruncBytes: 40})
+	items := []string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"}
+
+	// wiki_result_cache is a single shared SQLite table, not per-process
+	// memory: caching under the "default" sentinel every caller_id-omitting
+	// client falls back to would let one such client fetch/search another's
+	// cached data if it ever learned the resulting id, defeating per-caller
+	// isolation. cacheListResult must refuse to cache under that sentinel
+	// (and under an empty callerID), even when the result is large enough
+	// that a real caller_id would have triggered caching.
+	for _, callerID := range []string{"default", ""} {
+		out := cacheListResult(cache, callerID, "test_list_tool", items, budget.Config{Limit: 10}, "")
+		if strings.Contains(out, "wiki_result://") {
+			t.Fatalf("callerID %q: expected no cache pointer (shared-bucket isolation risk), got: %s", callerID, out)
+		}
+	}
+
+	// Confirm the threshold logic itself still works for a real caller_id -
+	// this isn't a blanket "caching is broken" regression.
+	out := cacheListResult(cache, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
+	if !strings.Contains(out, "wiki_result://") {
+		t.Fatalf("expected a cache pointer for a real caller_id, got: %s", out)
+	}
+}

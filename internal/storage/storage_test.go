@@ -222,6 +222,15 @@ func TestUpsertBundleDefaultsAndRoundTripsScope(t *testing.T) {
 	}
 }
 
+func TestUpsertBundleRejectsInvalidScope(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	_, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "scope-bad", Title: "Scope Bad", Scope: "not-a-real-scope"})
+	if !errors.Is(err, storage.ErrInvalid) {
+		t.Fatalf("UpsertBundle with invalid scope err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestStatsCountsRepositoryObjects(t *testing.T) {
 	repo := openRepo(t)
 	ctx := context.Background()

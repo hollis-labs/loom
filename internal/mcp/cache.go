@@ -250,9 +250,20 @@ func (c *ResultCache) Purge() (int, error) {
 //
 // cache may be nil, in which case this behaves exactly like the pre-cache
 // budget.ToolJSON(budget.Apply(...)) call sites it replaces.
+// defaultCallerID is the sentinel every wiki_* list/search tool falls back
+// to when a caller omits caller_id (see tools.go's stringArg(args,
+// "caller_id", "default") call sites). cacheListResult refuses to cache
+// under this value: the wiki_result_cache table is a single shared SQLite
+// store, not per-process memory, so anything cached under the shared
+// default bucket would be fetchable/searchable by any other caller that
+// also omits caller_id (and later learns the resulting id) - defeating
+// the per-caller isolation this cache exists for. Callers that want the
+// deep-dive-by-id feature must identify themselves with a real caller_id.
+const defaultCallerID = "default"
+
 func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items []T, cfg budget.Config, hintTemplate string) string {
 	env := budget.Apply(items, cfg, hintTemplate)
-	if cache != nil && len(items) > 0 {
+	if cache != nil && strings.TrimSpace(callerID) != "" && callerID != defaultCallerID && len(items) > 0 {
 		if full, err := json.Marshal(items); err == nil && len(full) > cache.SoftTruncBytes() {
 			id, expiresAt, cerr := cache.Store(callerID, uuid.NewString(), toolName, string(full))
 			if cerr == nil {

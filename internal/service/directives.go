@@ -179,8 +179,11 @@ func handleLogADRDirective(ctx context.Context, c *Compiler, bundleSlug, text, s
 //
 // Judgment call: Loom has no reminders/tasks table, so "a lightweight
 // record" is implemented as the smallest defensible page — no LLM pass, no
-// template body, no source-text fallback — rather than a new storage
-// concept. The body is just the directive's prompt itself (not the
+// explicit template selection (it still renders through the default
+// wiki_page.default template like any other compile, via
+// compileDirectiveRequest -> Compiler.run -> templateBody()), no
+// source-text fallback — rather than a new storage concept. The body is
+// just the directive's prompt itself (not the
 // surrounding context, unlike draft/extract): a reminder is meant to be a
 // short standalone note, not a compiled document. An empty prompt still
 // produces a valid ("Reminder", body "Reminder") page rather than dumping
