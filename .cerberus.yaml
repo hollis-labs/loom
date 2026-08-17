@@ -28,6 +28,7 @@ resources:
         - --addr
         - :8092
       dir: /Users/chrispian/dev/hollis-labs/apps/loom
+      env_file: .env
       mode: os_service
       port: 8092
       run_from: artifact
