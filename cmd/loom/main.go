@@ -122,7 +122,25 @@ func mcpCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer otelRuntime.Shutdown()
-	return loommcp.NewServerWithOptions(repo, comp, loommcp.Options{Recorder: otelRuntime.Recorder}).Run()
+	return loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)).Run()
+}
+
+// mcpOptions and serverConfig guard against a classic Go nil-interface
+// trap: otelRuntime.Recorder is a concrete *hotel.Recorder that is legally
+// nil when OTel is disabled (the default - no LOOM_OTEL_ENABLED/-otel
+// flag). Assigning that nil pointer straight into an interface-typed field
+// (loommcp.Options.Recorder / loomserver.Config.Recorder) produces a
+// non-nil interface wrapping a nil value, so every downstream `recorder !=
+// nil` check in internal/mcp and internal/server passes and the nil
+// receiver's method (HTTPRequest/ToolCall) panics on first use - i.e.
+// every request and every MCP tool call, with OTel off. Only assign the
+// field when the concrete pointer is actually non-nil.
+func mcpOptions(otelRuntime loomotel.Runtime) loommcp.Options {
+	opts := loommcp.Options{}
+	if otelRuntime.Recorder != nil {
+		opts.Recorder = otelRuntime.Recorder
+	}
+	return opts
 }
 
 func serve(ctx context.Context, args []string) error {
@@ -156,11 +174,19 @@ func serve(ctx context.Context, args []string) error {
 
 	mux := http.NewServeMux()
 	api.New(repo, comp).Register(mux)
-	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, loommcp.Options{Recorder: otelRuntime.Recorder}), httptransport.HandlerOptions{}))
+	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)), httptransport.HandlerOptions{}))
 	webui.Mount(mux)
 
 	log.Printf("Loom listening on http://localhost%s/", *addr)
-	return loomserver.Serve(ctx, loomserver.New(loomserver.Config{Addr: *addr, Handler: mux, Recorder: otelRuntime.Recorder, RouteResolver: loomRoute}))
+	return loomserver.Serve(ctx, loomserver.New(serverConfig(*addr, mux, otelRuntime, loomRoute)))
+}
+
+func serverConfig(addr string, handler http.Handler, otelRuntime loomotel.Runtime, routeResolver func(*http.Request) string) loomserver.Config {
+	cfg := loomserver.Config{Addr: addr, Handler: handler, RouteResolver: routeResolver}
+	if otelRuntime.Recorder != nil {
+		cfg.Recorder = otelRuntime.Recorder
+	}
+	return cfg
 }
 
 func loomRoute(r *http.Request) string {
