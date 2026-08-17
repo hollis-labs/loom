@@ -22,6 +22,8 @@ import (
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
+	"github.com/hollis-labs/loom/internal/lint"
+	loomanthropic "github.com/hollis-labs/loom/internal/llm/anthropic"
 	loommcp "github.com/hollis-labs/loom/internal/mcp"
 	loomotel "github.com/hollis-labs/loom/internal/otel"
 	loomserver "github.com/hollis-labs/loom/internal/server"
@@ -29,6 +31,11 @@ import (
 	"github.com/hollis-labs/loom/internal/storage"
 	"github.com/hollis-labs/loom/internal/webui"
 )
+
+// defaultLLMModel is used when ANTHROPIC_API_KEY is set but cfg.LLM.Model
+// is left blank, so generation_mode=llm compile jobs work out of the box
+// with just an API key.
+const defaultLLMModel = "claude-sonnet-4-6"
 
 const version = "0.1.0"
 
@@ -115,7 +122,25 @@ func mcpCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer otelRuntime.Shutdown()
-	return loommcp.NewServerWithOptions(repo, comp, loommcp.Options{Recorder: otelRuntime.Recorder}).Run()
+	return loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)).Run()
+}
+
+// mcpOptions and serverConfig guard against a classic Go nil-interface
+// trap: otelRuntime.Recorder is a concrete *hotel.Recorder that is legally
+// nil when OTel is disabled (the default - no LOOM_OTEL_ENABLED/-otel
+// flag). Assigning that nil pointer straight into an interface-typed field
+// (loommcp.Options.Recorder / loomserver.Config.Recorder) produces a
+// non-nil interface wrapping a nil value, so every downstream `recorder !=
+// nil` check in internal/mcp and internal/server passes and the nil
+// receiver's method (HTTPRequest/ToolCall) panics on first use - i.e.
+// every request and every MCP tool call, with OTel off. Only assign the
+// field when the concrete pointer is actually non-nil.
+func mcpOptions(otelRuntime loomotel.Runtime) loommcp.Options {
+	opts := loommcp.Options{}
+	if otelRuntime.Recorder != nil {
+		opts.Recorder = otelRuntime.Recorder
+	}
+	return opts
 }
 
 func serve(ctx context.Context, args []string) error {
@@ -149,11 +174,19 @@ func serve(ctx context.Context, args []string) error {
 
 	mux := http.NewServeMux()
 	api.New(repo, comp).Register(mux)
-	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, loommcp.Options{Recorder: otelRuntime.Recorder}), httptransport.HandlerOptions{}))
+	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)), httptransport.HandlerOptions{}))
 	webui.Mount(mux)
 
 	log.Printf("Loom listening on http://localhost%s/", *addr)
-	return loomserver.Serve(ctx, loomserver.New(loomserver.Config{Addr: *addr, Handler: mux, Recorder: otelRuntime.Recorder, RouteResolver: loomRoute}))
+	return loomserver.Serve(ctx, loomserver.New(serverConfig(*addr, mux, otelRuntime, loomRoute)))
+}
+
+func serverConfig(addr string, handler http.Handler, otelRuntime loomotel.Runtime, routeResolver func(*http.Request) string) loomserver.Config {
+	cfg := loomserver.Config{Addr: addr, Handler: handler, RouteResolver: routeResolver}
+	if otelRuntime.Recorder != nil {
+		cfg.Recorder = otelRuntime.Recorder
+	}
+	return cfg
 }
 
 func loomRoute(r *http.Request) string {
@@ -174,7 +207,7 @@ func loomRoute(r *http.Request) string {
 			return "/api/bundles/{bundle}"
 		}
 		switch parts[3] {
-		case "pages", "links", "verifications", "compile-jobs", "export":
+		case "pages", "links", "verifications", "conformance", "compile-jobs", "export":
 			return "/api/bundles/{bundle}/" + parts[3]
 		default:
 			return "/api/bundles/{bundle}/*"
@@ -187,7 +220,7 @@ func loomRoute(r *http.Request) string {
 			return "/api/pages/{bundle}/{slug}"
 		}
 		switch parts[4] {
-		case "links", "verifications":
+		case "links", "verifications", "conformance":
 			return "/api/pages/{bundle}/{slug}/" + parts[4]
 		default:
 			return "/api/pages/{bundle}/{slug}/*"
@@ -322,7 +355,7 @@ func bundlesCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: loom bundles list|get|put")
+		return fmt.Errorf("usage: loom bundles list|get|put|conformance")
 	}
 	switch args[0] {
 	case "list":
@@ -357,22 +390,44 @@ func bundlesCLI(ctx context.Context, args []string) error {
 		slug := fs.String("slug", "", "bundle slug")
 		title := fs.String("title", "", "bundle title")
 		description := fs.String("description", "", "bundle description")
+		scope := fs.String("scope", "", "bundle scope (project|meta|personal)")
 		_ = fs.Parse(args[1:])
 		if *slug == "" || *title == "" {
-			return fmt.Errorf("usage: loom bundles put -slug slug -title title [-description text]")
+			return fmt.Errorf("usage: loom bundles put -slug slug -title title [-description text] [-scope project|meta|personal]")
 		}
 		repo, _, cleanup, err := openApp(ctx, appArgs)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-		bundle, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: *slug, Title: *title, Description: *description})
+		bundle, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: *slug, Title: *title, Description: *description, Scope: *scope})
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(bundle)
+	case "conformance":
+		fs := flag.NewFlagSet("bundles conformance", flag.ExitOnError)
+		limit := fs.Int("limit", 100, "maximum pages to check")
+		_ = fs.Parse(args[1:])
+		if len(fs.Args()) != 1 {
+			return fmt.Errorf("usage: loom bundles conformance [-limit 100] <slug>")
+		}
+		repo, _, cleanup, err := openApp(ctx, appArgs)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		b, err := repo.GetBundle(ctx, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		pages, err := repo.ListPages(ctx, b.ID, "", *limit)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(lint.CheckBundle(pages))
 	default:
-		return fmt.Errorf("usage: loom bundles list|get|put")
+		return fmt.Errorf("usage: loom bundles list|get|put|conformance")
 	}
 }
 
@@ -468,7 +523,7 @@ func pagesCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 	switch args[0] {
 	case "list":
@@ -491,10 +546,10 @@ func pagesCLI(ctx context.Context, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(pages)
-	case "get", "links", "verifications":
+	case "get", "links", "verifications", "conformance":
 		return pageDetailCLI(ctx, appArgs, args[0], args[1:])
 	default:
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 }
 
@@ -529,8 +584,10 @@ func pageDetailCLI(ctx context.Context, appArgs []string, cmd string, args []str
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(verifications)
+	case "conformance":
+		return json.NewEncoder(os.Stdout).Encode(lint.CheckPage(page))
 	default:
-		return fmt.Errorf("usage: loom pages list|get|links|verifications")
+		return fmt.Errorf("usage: loom pages list|get|links|verifications|conformance")
 	}
 }
 
@@ -835,7 +892,45 @@ func openApp(ctx context.Context, args []string) (*storage.Repository, *service.
 		return nil, nil, nil, err
 	}
 	repo := storage.NewRepository(db)
-	return repo, service.NewCompiler(repo), func() { _ = db.Close() }, nil
+	comp := service.NewCompiler(repo)
+	if err := configureLLMProvider(comp, layout); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	return repo, comp, func() { _ = db.Close() }, nil
+}
+
+// configureLLMProvider wires an Anthropic-backed llm.Provider into comp
+// whenever ANTHROPIC_API_KEY is present in the environment, so compile jobs
+// with generation_mode=llm work without extra setup. It is a no-op (and
+// leaves generation_mode=llm jobs failing with a clear error from
+// compiler.CompileWikiPageWithLLM) when no API key is set - the
+// deterministic compiler path never depends on this.
+//
+// It also passes the loaded config's cfg.Filters.RedactPatterns through to
+// comp.SetLLMProvider, so user-configured redaction patterns (the same
+// mechanism internal/ingest applies on the ingest path) are applied to job
+// bodies before they are sent to the LLM Provider, in addition to
+// internal/llm's baseline secret-shaped redactors.
+func configureLLMProvider(comp *service.Compiler, layout paths.Layout) error {
+	apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	if apiKey == "" {
+		return nil
+	}
+	cfg, _, err := loomconfig.Load(layout, "config.yaml")
+	if err != nil {
+		return err
+	}
+	model := strings.TrimSpace(cfg.LLM.Model)
+	if model == "" {
+		model = defaultLLMModel
+	}
+	provider, err := loomanthropic.New(apiKey, model)
+	if err != nil {
+		return err
+	}
+	comp.SetLLMProvider(provider, cfg.Filters.RedactPatterns)
+	return nil
 }
 
 func splitAppArgs(args []string) ([]string, []string, error) {

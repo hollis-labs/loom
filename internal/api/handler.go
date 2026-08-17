@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
+	"github.com/hollis-labs/loom/internal/lint"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
 )
@@ -74,11 +75,12 @@ func (h *Handler) bundles(w http.ResponseWriter, r *http.Request) {
 			Slug        string `json:"slug"`
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			Scope       string `json:"scope"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: req.Slug, Title: req.Title, Description: req.Description})
+		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: req.Slug, Title: req.Title, Description: req.Description, Scope: req.Scope})
 		respond(w, bundle, err)
 	default:
 		method(w)
@@ -99,11 +101,12 @@ func (h *Handler) bundle(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			Scope       string `json:"scope"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: parts[0], Title: req.Title, Description: req.Description})
+		bundle, err := h.repo.UpsertBundle(r.Context(), domain.Bundle{Slug: parts[0], Title: req.Title, Description: req.Description, Scope: req.Scope})
 		respond(w, bundle, err)
 	case len(parts) == 2 && parts[1] == "pages" && r.Method == http.MethodGet:
 		b, err := h.repo.GetBundle(r.Context(), parts[0])
@@ -129,6 +132,18 @@ func (h *Handler) bundle(w http.ResponseWriter, r *http.Request) {
 		}
 		verifications, err := h.repo.ListBundleVerifications(r.Context(), b.ID, queryLimit(r, 100))
 		respond(w, verifications, err)
+	case len(parts) == 2 && parts[1] == "conformance" && r.Method == http.MethodGet:
+		b, err := h.repo.GetBundle(r.Context(), parts[0])
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		pages, err := h.repo.ListPages(r.Context(), b.ID, "", queryLimit(r, 100))
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		respond(w, lint.CheckBundle(pages), nil)
 	case len(parts) == 2 && parts[1] == "compile-jobs" && r.Method == http.MethodPost:
 		var req struct {
 			Generator string `json:"generator"`
@@ -187,7 +202,7 @@ func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/api/pages/"))
-	if len(parts) != 2 && (len(parts) != 3 || (parts[2] != "links" && parts[2] != "verifications")) {
+	if len(parts) != 2 && (len(parts) != 3 || (parts[2] != "links" && parts[2] != "verifications" && parts[2] != "conformance")) {
 		notFound(w)
 		return
 	}
@@ -204,6 +219,8 @@ func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 		case "verifications":
 			verifications, err := h.repo.ListPageVerifications(r.Context(), p.ID)
 			respond(w, verifications, err)
+		case "conformance":
+			respond(w, lint.CheckPage(p), nil)
 		default:
 			notFound(w)
 		}

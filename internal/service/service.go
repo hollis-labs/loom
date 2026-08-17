@@ -5,26 +5,71 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/loom/internal/compiler"
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/ingest"
+	"github.com/hollis-labs/loom/internal/llm"
 	"github.com/hollis-labs/loom/internal/storage"
 )
 
 type Compiler struct {
-	repo *storage.Repository
+	repo              *storage.Repository
+	llmProvider       llm.Provider
+	llmRedactPatterns []string
 }
 
 func NewCompiler(repo *storage.Repository) *Compiler {
 	return &Compiler{repo: repo}
 }
 
+// SetLLMProvider configures the LLM provider used for compile jobs
+// requesting generation_mode=llm (compiler.GenerationModeLLM). When unset,
+// such jobs fail with a descriptive error from CompileWikiPageWithLLM
+// rather than silently falling back to the deterministic compiler; the
+// deterministic path (the default) never requires a provider.
+//
+// redactPatterns are the user-configured redaction patterns
+// (config.Filters.RedactPatterns) to apply, in addition to llm's baseline
+// defaultRedactors, to a job's body before it is sent to provider.Generate
+// (see CompileWikiPageWithLLM and llm.RedactWithPatterns). This is the same
+// config-driven mechanism internal/ingest already applies on the ingest
+// path; passing it here ensures LLM-bound content gets the same
+// user-configured secret/PII protection.
+func (c *Compiler) SetLLMProvider(provider llm.Provider, redactPatterns []string) {
+	c.llmProvider = provider
+	c.llmRedactPatterns = redactPatterns
+}
+
 type DirectiveCompileResult struct {
-	Parse   directivex.ParseResponse `json:"parse"`
-	Jobs    []domain.CompileJob      `json:"jobs"`
-	Skipped []string                 `json:"skipped"`
+	Parse directivex.ParseResponse `json:"parse"`
+	Jobs  []domain.CompileJob      `json:"jobs"`
+	// Skipped holds hashes of directives already present in the ledger —
+	// i.e. an idempotent re-parse of content already seen (see
+	// directivex.ParseAndLedger / Directive.New). This is the only
+	// "skip" outcome: every *new* directive is now dispatched to a
+	// handler (see directiveHandlers in directives.go) and either
+	// produces a job or lands in Failed below — nothing is silently
+	// dropped anymore.
+	Skipped []string `json:"skipped"`
+	// Failed holds new directives whose handler could not even start a
+	// compile job (e.g. an explicit ::config generator=<unsupported>
+	// override). Handler-internal compile failures are NOT reported
+	// here — those still produce a "failed"-status CompileJob (see
+	// Compiler.run) and are included in Jobs, consistent with
+	// Compiler.Request's existing job-failure semantics.
+	Failed []DirectiveFailure `json:"failed,omitempty"`
+}
+
+// DirectiveFailure records why one directive's handler failed to produce a
+// compile job at all (see DirectiveCompileResult.Failed).
+type DirectiveFailure struct {
+	Hash    string `json:"hash"`
+	Command string `json:"command"`
+	Line    int    `json:"line"`
+	Reason  string `json:"reason"`
 }
 
 type IngestResult struct {
@@ -56,6 +101,17 @@ func (c *Compiler) Request(ctx context.Context, bundleSlug, generator, input str
 	return c.repo.GetJob(ctx, job.ID)
 }
 
+// RequestFromDirectives parses text for :: directives, ledgers each one
+// (idempotent — see directivex.ParseAndLedger), and dispatches every *new*
+// directive to a handler keyed on its Command (see directiveHandlers in
+// directives.go). A directive whose handler can't even start a compile job
+// (e.g. an unsupported ::config generator=... override) is recorded in
+// Failed rather than silently dropped; a directive whose compile job runs
+// but fails (e.g. a missing template) still shows up in Jobs with
+// Status="failed", same as Compiler.Request always behaved. A lookup
+// failure that isn't specific to one directive (storage.ErrNotFound, e.g.
+// bundleSlug doesn't exist) aborts the whole call, matching Request's own
+// contract.
 func (c *Compiler) RequestFromDirectives(ctx context.Context, bundleSlug, text, source string) (DirectiveCompileResult, error) {
 	parsed, err := directivex.ParseAndLedger(ctx, c.repo, text, source)
 	if err != nil {
@@ -67,28 +123,13 @@ func (c *Compiler) RequestFromDirectives(ctx context.Context, bundleSlug, text, 
 			out.Skipped = append(out.Skipped, d.Hash)
 			continue
 		}
-		generator := d.Config["generator"]
-		if generator == "" {
-			generator = "wiki_page"
-		}
-		if generator != "wiki_page" {
-			out.Skipped = append(out.Skipped, d.Hash)
+		job, err := dispatchDirective(ctx, c, bundleSlug, text, source, d)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return DirectiveCompileResult{}, fmt.Errorf("directive line %d (%s): %w", d.Line, d.Command, err)
+			}
+			out.Failed = append(out.Failed, DirectiveFailure{Hash: d.Hash, Command: d.Command, Line: d.Line, Reason: err.Error()})
 			continue
-		}
-		input, err := json.Marshal(compiler.Request{
-			Title:    directiveTitle(d),
-			Slug:     d.Config["slug"],
-			Summary:  d.Config["summary"],
-			Body:     text,
-			Source:   source,
-			Template: d.Config["template"],
-		})
-		if err != nil {
-			return DirectiveCompileResult{}, err
-		}
-		job, err := c.Request(ctx, bundleSlug, "wiki_page", string(input))
-		if err != nil {
-			return DirectiveCompileResult{}, fmt.Errorf("compile directive line %d: %w", d.Line, err)
 		}
 		out.Jobs = append(out.Jobs, job)
 	}
@@ -162,12 +203,27 @@ func (c *Compiler) run(ctx context.Context, job domain.CompileJob) error {
 	if err := c.repo.UpdateJob(ctx, job.ID, "running", "", ""); err != nil {
 		return err
 	}
-	_ = c.repo.AddEvent(ctx, job.ID, "running", "deterministic compiler started")
+	mode := compiler.RequestGenerationMode(job.Input)
+	startMsg := "deterministic compiler started"
+	if mode == compiler.GenerationModeLLM {
+		startMsg = "llm compiler started"
+	}
+	_ = c.repo.AddEvent(ctx, job.ID, "running", startMsg)
 	templateBody, err := c.templateBody(ctx, job.Input)
 	if err != nil {
 		return err
 	}
-	result, err := compiler.CompileWikiPageWithTemplate(job.BundleID, job.Input, templateBody)
+	var result compiler.Result
+	switch mode {
+	case compiler.GenerationModeLLM:
+		result, err = compiler.CompileWikiPageWithLLM(ctx, c.llmProvider, job.BundleID, job.Input, templateBody, c.llmRedactPatterns)
+	default:
+		result, err = compiler.CompileWikiPageWithTemplate(job.BundleID, job.Input, templateBody)
+	}
+	if err != nil {
+		return err
+	}
+	existing, err := c.existingPage(ctx, job.BundleID, result.Page)
 	if err != nil {
 		return err
 	}
@@ -175,11 +231,42 @@ func (c *Compiler) run(ctx context.Context, job domain.CompileJob) error {
 	if err != nil {
 		return err
 	}
-	data, _ := json.Marshal(map[string]any{"page": page})
+	data, err := json.Marshal(buildCompileOutput(existing, page))
+	if err != nil {
+		return err
+	}
 	if err := c.repo.UpdateJob(ctx, job.ID, "completed", string(data), ""); err != nil {
 		return err
 	}
 	return c.repo.AddEvent(ctx, job.ID, "completed", "wiki page stored")
+}
+
+// existingPage looks up the page (if any) that result.Page's compile is
+// about to overwrite at bundleID+result.Page.Slug, BEFORE UpsertPage
+// runs — this is the only point in the compile flow where "what did this
+// page look like right before this write" is still observable (see
+// buildCompileOutput in confidence.go). It normalizes the slug the same
+// way storage.Repository.UpsertPage does, since compiler.Result.Page.Slug
+// may still hold an un-sluggified caller-supplied slug at this point (the
+// deterministic/LLM compilers only run storage.Slug over an empty slug's
+// fallback-from-title, never over an explicit one). A not-found lookup is
+// the common case (most compiles create a new page) and returns (nil,
+// nil), not an error.
+func (c *Compiler) existingPage(ctx context.Context, bundleID int64, p domain.Page) (*domain.Page, error) {
+	slug := strings.TrimSpace(p.Slug)
+	if slug == "" {
+		slug = storage.Slug(p.Title)
+	} else {
+		slug = storage.Slug(slug)
+	}
+	existing, err := c.repo.GetPageByBundleSlug(ctx, bundleID, slug)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &existing, nil
 }
 
 func (c *Compiler) templateBody(ctx context.Context, raw string) (string, error) {

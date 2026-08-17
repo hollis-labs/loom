@@ -521,6 +521,78 @@ func TestMCPPageVerifications(t *testing.T) {
 	}
 }
 
+func TestMCPPageAndBundleConformance(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+
+	_, err = srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Conformance","summary":"summary","body":"Body","source":"test"}`})
+	if err != nil {
+		t.Fatalf("compile tool: %v", err)
+	}
+
+	raw, err := srv.CallTool(ctx, "loom_page_conformance", map[string]any{"bundle": "nanite", "slug": "mcp-conformance"})
+	if err != nil {
+		t.Fatalf("page conformance tool: %v", err)
+	}
+	var pageReport struct {
+		Passed   bool `json:"passed"`
+		Findings []struct {
+			Rule string `json:"rule"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(raw), &pageReport); err != nil {
+		t.Fatalf("page conformance json: %v", err)
+	}
+	if !pageReport.Passed || len(pageReport.Findings) != 0 {
+		t.Fatalf("page conformance = %+v, want passed with no findings", pageReport)
+	}
+
+	raw, err = srv.CallTool(ctx, "loom_bundle_conformance", map[string]any{"bundle": "nanite", "limit": float64(10)})
+	if err != nil {
+		t.Fatalf("bundle conformance tool: %v", err)
+	}
+	var bundleEnv struct {
+		Count int `json:"count"`
+		Items []struct {
+			Passed bool `json:"passed"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &bundleEnv); err != nil {
+		t.Fatalf("bundle conformance json: %v", err)
+	}
+	if bundleEnv.Count != 1 || !bundleEnv.Items[0].Passed {
+		t.Fatalf("bundle conformance env = %+v", bundleEnv)
+	}
+
+	// Simulate a page that reached wiki_pages by some route other than
+	// UpsertPage (direct SQL, a legacy row predating the OKF migration)
+	// where Type's write-time default never ran, so the tool has
+	// something real to flag.
+	if _, err := repo.DB().ExecContext(ctx, `UPDATE wiki_pages SET type = '' WHERE slug = 'mcp-conformance'`); err != nil {
+		t.Fatalf("simulate blank type: %v", err)
+	}
+
+	raw, err = srv.CallTool(ctx, "loom_page_conformance", map[string]any{"bundle": "nanite", "slug": "mcp-conformance"})
+	if err != nil {
+		t.Fatalf("page conformance tool (blank type): %v", err)
+	}
+	if err := json.Unmarshal([]byte(raw), &pageReport); err != nil {
+		t.Fatalf("page conformance (blank type) json: %v", err)
+	}
+	if pageReport.Passed || len(pageReport.Findings) == 0 {
+		t.Fatalf("page conformance (blank type) = %+v, want failed with findings", pageReport)
+	}
+}
+
 func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))

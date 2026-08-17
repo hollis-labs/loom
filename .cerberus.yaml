@@ -1,0 +1,43 @@
+kind: cerberus-project/v1
+owner: loom
+namespace: local
+project:
+  id: loom
+  name: Loom
+  description: Content generation and wiki compiler (Sysop UI)
+resources:
+  # `loom serve` — HTTP API, embedded Sysop UI, and hosted /mcp, all in one
+  # process. Runs from the repo dir (no -db/-workspace override) so it
+  # resolves its SQLite store via go-apppaths project mode, same as the
+  # existing dev .loom/ layout already in this repo (mirrors Tesseract's
+  # convention of not pinning a custom root and letting go-apppaths resolve
+  # normally). Port 8092: free in the 809x Go-service block (8089 tesseract,
+  # 8090 nanite, 8091 fragments-engine, 8095 hadron, 8096 ion, 8097 agridd,
+  # 8098 glyph).
+  - id: loom-serve
+    name: Loom Serve
+    type: process
+    project: loom
+    connector: local
+    config:
+      build_strategy:
+        kind: make_standard
+      command:
+        - ./loom
+        - serve
+        - --addr
+        - :8092
+      dir: /Users/chrispian/dev/hollis-labs/apps/loom
+      env_file: .env
+      mode: os_service
+      port: 8092
+      run_from: artifact
+      supervisor: launchd
+      url: http://127.0.0.1:8092
+    tags:
+      - loom
+      - api
+      - go
+      - launchd
+      - v2
+registry_urn: msg://agent/agent-mux/prj_slovv6icj9

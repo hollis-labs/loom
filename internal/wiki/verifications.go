@@ -7,27 +7,37 @@ import (
 	"github.com/hollis-labs/loom/internal/domain"
 )
 
+// StructuralCheckerActor identifies Loom's own deterministic structural/content
+// checker as the "by" actor on the verification rows it writes. This is a
+// distinct trust signal from an actor attestation (human or agent) that a page
+// is actually correct - see domain.Verification.
+const StructuralCheckerActor = "loom-structural-checker"
+
 func VerifyPage(p domain.Page, links []domain.Link) []domain.Verification {
 	out := []domain.Verification{
 		{
 			Kind:    "heading",
 			Status:  status(hasTitleHeading(p.Body, p.Title)),
 			Message: headingMessage(p.Body, p.Title),
+			By:      StructuralCheckerActor,
 		},
 		{
 			Kind:    "summary",
 			Status:  status(strings.TrimSpace(p.Summary) != ""),
 			Message: summaryMessage(p.Summary),
+			By:      StructuralCheckerActor,
 		},
 		{
 			Kind:    "source",
 			Status:  status(strings.TrimSpace(p.Source) != ""),
 			Message: sourceMessage(p.Source),
+			By:      StructuralCheckerActor,
 		},
 		{
 			Kind:    "links",
 			Status:  "info",
 			Message: linkMessage(len(links)),
+			By:      StructuralCheckerActor,
 		},
 	}
 	return out

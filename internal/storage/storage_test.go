@@ -2,12 +2,15 @@ package storage_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/wiki"
 )
 
 func openRepo(t *testing.T) *storage.Repository {
@@ -32,7 +35,7 @@ func TestMigrateSeedsNaniteIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppliedMigrations: %v", err)
 	}
-	wantApplied := []string{"001_wiki_core", "002_compile_jobs", "003_directives_templates", "004_ingest_ledger", "005_default_template_body"}
+	wantApplied := []string{"001_wiki_core", "002_compile_jobs", "003_directives_templates", "004_ingest_ledger", "005_default_template_body", "006_wiki_bundle_page_okf_fields", "007_wiki_links_redesign", "008_wiki_verifications_actor", "009_wiki_result_cache"}
 	if len(applied) != len(wantApplied) {
 		t.Fatalf("applied migrations = %+v, want %+v", applied, wantApplied)
 	}
@@ -193,6 +196,41 @@ func TestBundleUpsert(t *testing.T) {
 	}
 }
 
+func TestUpsertBundleDefaultsAndRoundTripsScope(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	defaulted, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "scope-default", Title: "Scope Default"})
+	if err != nil {
+		t.Fatalf("UpsertBundle defaulted: %v", err)
+	}
+	if defaulted.Scope != "project" {
+		t.Fatalf("Scope = %q, want default %q", defaulted.Scope, "project")
+	}
+	personal, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "scope-personal", Title: "Scope Personal", Scope: "personal"})
+	if err != nil {
+		t.Fatalf("UpsertBundle personal: %v", err)
+	}
+	if personal.Scope != "personal" {
+		t.Fatalf("Scope = %q, want %q", personal.Scope, "personal")
+	}
+	got, err := repo.GetBundle(ctx, "scope-personal")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	if got.Scope != "personal" {
+		t.Fatalf("GetBundle Scope = %q, want %q round-tripped", got.Scope, "personal")
+	}
+}
+
+func TestUpsertBundleRejectsInvalidScope(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	_, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "scope-bad", Title: "Scope Bad", Scope: "not-a-real-scope"})
+	if !errors.Is(err, storage.ErrInvalid) {
+		t.Fatalf("UpsertBundle with invalid scope err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestStatsCountsRepositoryObjects(t *testing.T) {
 	repo := openRepo(t)
 	ctx := context.Background()
@@ -271,7 +309,7 @@ func TestUpsertPageReplacesExtractedLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBundleLinks: %v", err)
 	}
-	if len(bundleLinks) != 1 || bundleLinks[0].PageID != page.ID {
+	if len(bundleLinks) != 1 || bundleLinks[0].FromPageID != page.ID {
 		t.Fatalf("bundle links = %+v", bundleLinks)
 	}
 }
@@ -334,6 +372,163 @@ func TestUpsertPageReplacesVerifications(t *testing.T) {
 	}
 	if len(bundleVerifications) != 4 {
 		t.Fatalf("bundle verifications = %+v", bundleVerifications)
+	}
+}
+
+func TestUpsertPageResolvesInternalWikiLinkTarget(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	b, err := repo.GetBundle(ctx, "nanite")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	target, err := repo.UpsertPage(ctx, domain.Page{
+		BundleID: b.ID,
+		Slug:     "target-page",
+		Title:    "Target Page",
+		Body:     "# Target Page",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage target: %v", err)
+	}
+	source, err := repo.UpsertPage(ctx, domain.Page{
+		BundleID: b.ID,
+		Slug:     "source-page",
+		Title:    "Source Page",
+		Body:     "# Source Page\n\nSee [[Target Page]] and [external](https://example.com).",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage source: %v", err)
+	}
+	links, err := repo.ListPageLinks(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("ListPageLinks: %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("links = %+v, want two", links)
+	}
+	wikiLink := links[0]
+	if wikiLink.Kind != "wiki" || wikiLink.Target != "target-page" {
+		t.Fatalf("wiki link = %+v, want kind wiki target target-page", wikiLink)
+	}
+	if wikiLink.ToPageID == nil || *wikiLink.ToPageID != target.ID {
+		t.Fatalf("wiki link ToPageID = %v, want %d", wikiLink.ToPageID, target.ID)
+	}
+	externalLink := links[1]
+	if externalLink.Kind != "external" {
+		t.Fatalf("external link = %+v, want kind external", externalLink)
+	}
+	if externalLink.ToPageID != nil {
+		t.Fatalf("external link ToPageID = %v, want nil", *externalLink.ToPageID)
+	}
+}
+
+func TestUpsertPagePopulatesContentHash(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	b, err := repo.GetBundle(ctx, "nanite")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	body := "# Hash Page\n\nOriginal body."
+	page, err := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "hash-page", Title: "Hash Page", Body: body})
+	if err != nil {
+		t.Fatalf("UpsertPage: %v", err)
+	}
+	sum := sha256.Sum256([]byte(body))
+	want := hex.EncodeToString(sum[:])
+	if page.ContentHash != want {
+		t.Fatalf("ContentHash = %q, want %q", page.ContentHash, want)
+	}
+	updatedBody := "# Hash Page\n\nUpdated body."
+	updated, err := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "hash-page", Title: "Hash Page", Body: updatedBody})
+	if err != nil {
+		t.Fatalf("second UpsertPage: %v", err)
+	}
+	sum2 := sha256.Sum256([]byte(updatedBody))
+	want2 := hex.EncodeToString(sum2[:])
+	if updated.ContentHash != want2 {
+		t.Fatalf("updated ContentHash = %q, want %q", updated.ContentHash, want2)
+	}
+	if updated.ContentHash == page.ContentHash {
+		t.Fatalf("ContentHash unchanged after body update, want it to change")
+	}
+}
+
+func TestUpsertPageDefaultsDescriptionAndSources(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	b, err := repo.GetBundle(ctx, "nanite")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	defaulted, err := repo.UpsertPage(ctx, domain.Page{
+		BundleID: b.ID,
+		Slug:     "defaults",
+		Title:    "Defaults",
+		Summary:  "the summary",
+		Source:   "the source",
+		Body:     "# Defaults",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage defaults: %v", err)
+	}
+	if defaulted.Description != "the summary" {
+		t.Fatalf("Description = %q, want defaulted to Summary %q", defaulted.Description, "the summary")
+	}
+	if len(defaulted.Sources) != 1 || defaulted.Sources[0] != "the source" {
+		t.Fatalf("Sources = %+v, want [the source]", defaulted.Sources)
+	}
+	explicit, err := repo.UpsertPage(ctx, domain.Page{
+		BundleID:    b.ID,
+		Slug:        "explicit",
+		Title:       "Explicit",
+		Summary:     "the summary",
+		Description: "explicit description",
+		Source:      "the source",
+		Sources:     []string{"source-a", "source-b"},
+		Body:        "# Explicit",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage explicit: %v", err)
+	}
+	if explicit.Description != "explicit description" {
+		t.Fatalf("Description = %q, want explicit value preserved", explicit.Description)
+	}
+	if len(explicit.Sources) != 2 || explicit.Sources[0] != "source-a" || explicit.Sources[1] != "source-b" {
+		t.Fatalf("Sources = %+v, want explicit values preserved", explicit.Sources)
+	}
+}
+
+func TestUpsertPageVerificationsCarryStructuralCheckerActor(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	b, err := repo.GetBundle(ctx, "nanite")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	page, err := repo.UpsertPage(ctx, domain.Page{
+		BundleID: b.ID,
+		Slug:     "actor-check",
+		Title:    "Actor Check",
+		Summary:  "summary",
+		Source:   "test",
+		Body:     "# Actor Check",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage: %v", err)
+	}
+	verifications, err := repo.ListPageVerifications(ctx, page.ID)
+	if err != nil {
+		t.Fatalf("ListPageVerifications: %v", err)
+	}
+	if len(verifications) == 0 {
+		t.Fatalf("verifications = %+v, want at least one", verifications)
+	}
+	for _, verification := range verifications {
+		if verification.By != wiki.StructuralCheckerActor {
+			t.Fatalf("verification.By = %q, want %q", verification.By, wiki.StructuralCheckerActor)
+		}
 	}
 }
 

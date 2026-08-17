@@ -1,0 +1,12 @@
+-- Adds the OKF "verified" family's actor field to wiki_verifications
+-- (loom-architecture.md §5: `page_id, by, at`).
+--
+-- The existing rows are Loom's own deterministic structural/content checks
+-- (internal/wiki/verifications.go), not human/agent attestations - those are a
+-- different trust signal. "by" distinguishes the two without deleting or
+-- replacing the existing automated-check mechanism. created_at already serves
+-- as the "at" timestamp, so it is not renamed.
+--
+-- "by" is a reserved word in SQLite's grammar (used in ORDER BY / GROUP BY), so it
+-- must always be referenced quoted as "by" in application SQL.
+ALTER TABLE wiki_verifications ADD COLUMN "by" TEXT NOT NULL DEFAULT '';

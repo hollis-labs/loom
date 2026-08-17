@@ -224,6 +224,155 @@ func TestIngestFilesIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCompileConfidenceNewPage(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	comp := service.NewCompiler(repo)
+
+	input, err := json.Marshal(compiler.Request{Title: "Confidence New", Slug: "confidence-new", Body: "# Confidence New\n\nFirst line.\nSecond line.\n"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	job, err := comp.Request(ctx, "nanite", "wiki_page", string(input))
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if job.Status != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+	var output domain.CompileOutput
+	if err := json.Unmarshal([]byte(job.Output), &output); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if output.PageExisted {
+		t.Fatalf("output.PageExisted = true, want false for a brand-new page: %+v", output)
+	}
+	if output.Confidence != 1.0 || output.ConfidenceTier != "high" {
+		t.Fatalf("output confidence = %v/%q, want 1.0/high: %+v", output.Confidence, output.ConfidenceTier, output)
+	}
+	if output.Diff != nil {
+		t.Fatalf("output.Diff = %+v, want nil for a brand-new page (nothing to compare against)", output.Diff)
+	}
+}
+
+func TestCompileConfidenceIdenticalOverwrite(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	comp := service.NewCompiler(repo)
+	body := "# Confidence Overwrite\n\nSame line one.\nSame line two.\n"
+	input, err := json.Marshal(compiler.Request{Title: "Confidence Overwrite", Slug: "confidence-overwrite", Body: body})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := comp.Request(ctx, "nanite", "wiki_page", string(input)); err != nil {
+		t.Fatalf("first Request: %v", err)
+	}
+
+	job, err := comp.Request(ctx, "nanite", "wiki_page", string(input))
+	if err != nil {
+		t.Fatalf("second Request: %v", err)
+	}
+	if job.Status != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+	var output domain.CompileOutput
+	if err := json.Unmarshal([]byte(job.Output), &output); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if !output.PageExisted {
+		t.Fatalf("output.PageExisted = false, want true: %+v", output)
+	}
+	if output.Confidence != 1.0 || output.ConfidenceTier != "high" {
+		t.Fatalf("output confidence = %v/%q, want 1.0/high for a no-op overwrite: %+v", output.Confidence, output.ConfidenceTier, output)
+	}
+	if output.Diff == nil {
+		t.Fatalf("output.Diff = nil, want a trivial (no-op) diff summary")
+	}
+	if output.Diff.OldContentHash != output.Diff.NewContentHash {
+		t.Fatalf("diff hashes = %q/%q, want equal for an identical-body overwrite", output.Diff.OldContentHash, output.Diff.NewContentHash)
+	}
+	if output.Diff.LineDelta != 0 || output.Diff.SimilarityRatio != 1.0 || output.Diff.UnifiedDiff != "" {
+		t.Fatalf("diff = %+v, want zero line delta, similarity 1.0, empty unified diff", output.Diff)
+	}
+}
+
+func TestCompileConfidenceSubstantialOverwrite(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	comp := service.NewCompiler(repo)
+
+	firstBody := "# Doc\n\nAlpha line.\nBeta line.\nGamma line.\nDelta line.\nEpsilon line."
+	firstInput, err := json.Marshal(compiler.Request{Title: "Doc", Slug: "confidence-rewrite", Body: firstBody})
+	if err != nil {
+		t.Fatalf("marshal first: %v", err)
+	}
+	if _, err := comp.Request(ctx, "nanite", "wiki_page", string(firstInput)); err != nil {
+		t.Fatalf("first Request: %v", err)
+	}
+
+	secondBody := "# Doc\n\nZulu different line.\nYankee other line.\nXray unrelated line.\nWhiskey new line.\nVictor extra line.\nUniform more line.\nTango final line."
+	secondInput, err := json.Marshal(compiler.Request{Title: "Doc", Slug: "confidence-rewrite", Body: secondBody})
+	if err != nil {
+		t.Fatalf("marshal second: %v", err)
+	}
+	job, err := comp.Request(ctx, "nanite", "wiki_page", string(secondInput))
+	if err != nil {
+		t.Fatalf("second Request: %v", err)
+	}
+	if job.Status != "completed" {
+		t.Fatalf("job = %+v", job)
+	}
+	var output domain.CompileOutput
+	if err := json.Unmarshal([]byte(job.Output), &output); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if !output.PageExisted {
+		t.Fatalf("output.PageExisted = false, want true: %+v", output)
+	}
+	if output.Diff == nil {
+		t.Fatalf("output.Diff = nil, want a real diff summary for a substantially different overwrite")
+	}
+	if output.Diff.OldContentHash == output.Diff.NewContentHash {
+		t.Fatalf("diff hashes are equal, want different content hashes for a substantially different overwrite")
+	}
+	if output.Diff.LineDelta != 2 {
+		t.Fatalf("diff.LineDelta = %d, want 2 (7 old lines -> 9 new lines): %+v", output.Diff.LineDelta, output.Diff)
+	}
+	if output.Diff.SimilarityRatio >= 0.5 {
+		t.Fatalf("diff.SimilarityRatio = %v, want < 0.5 for near-entirely-different content", output.Diff.SimilarityRatio)
+	}
+	if output.Confidence != output.Diff.SimilarityRatio || output.ConfidenceTier != "low" {
+		t.Fatalf("output confidence = %v/%q, want similarity-ratio/low: %+v", output.Confidence, output.ConfidenceTier, output)
+	}
+	if !strings.Contains(output.Diff.UnifiedDiff, "-Alpha line.") || !strings.Contains(output.Diff.UnifiedDiff, "+Zulu different line.") {
+		t.Fatalf("unified diff missing expected -/+ lines: %q", output.Diff.UnifiedDiff)
+	}
+}
+
 func TestIngestTextIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
@@ -61,6 +62,73 @@ func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 	}
 }
 
+func TestExportBundlePageFrontmatterIsFullOKFShape(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := storage.NewRepository(db)
+	b, err := repo.GetBundle(ctx, "nanite")
+	if err != nil {
+		t.Fatalf("GetBundle: %v", err)
+	}
+	staleAfter := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	generatedAt := time.Date(2026, 8, 16, 12, 30, 0, 0, time.UTC)
+	_, err = repo.UpsertPage(ctx, domain.Page{
+		BundleID:          b.ID,
+		Slug:              "runtime-notes",
+		Type:              "howto",
+		Title:             "Runtime Notes",
+		Summary:           "How the runtime works",
+		Tags:              []string{"runtime", "internals"},
+		Status:            "active",
+		StaleAfter:        &staleAfter,
+		GeneratedBy:       "loom-compiler",
+		GeneratedAt:       &generatedAt,
+		Body:              "# Runtime Notes\n\nDetails.",
+		Source:            "src/runtime.go",
+		SourceFragmentIDs: []int64{7, 9},
+	})
+	if err != nil {
+		t.Fatalf("UpsertPage: %v", err)
+	}
+	dir := t.TempDir()
+	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir); err != nil {
+		t.Fatalf("ExportBundle: %v", err)
+	}
+	page, err := os.ReadFile(filepath.Join(dir, "runtime-notes.md"))
+	if err != nil {
+		t.Fatalf("read page: %v", err)
+	}
+	text := string(page)
+	for _, want := range []string{
+		"path: runtime-notes.md",
+		"type: howto",
+		"title: Runtime Notes",
+		"description: How the runtime works",
+		"- runtime\n    - internals",
+		"status: active",
+		"stale_after: \"2026-09-01\"",
+		"generated_by: loom-compiler",
+		"generated_at: \"2026-08-16T12:30:00Z\"",
+		"- src/runtime.go",
+		"content_hash:",
+		"- 7\n    - 9",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("frontmatter missing %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(text, "## Verifications") {
+		t.Fatalf("page missing verifications section = %s", text)
+	}
+}
+
 func TestExportBundleEscapesMarkdownControlCharacters(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
@@ -95,7 +163,7 @@ func TestExportBundleEscapesMarkdownControlCharacters(t *testing.T) {
 		t.Fatalf("read page: %v", err)
 	}
 	text := string(page)
-	if !strings.Contains(text, `title: "Escape: Check"`) || !strings.Contains(text, `summary: "pipe | newline\nsummary"`) {
+	if !strings.Contains(text, `title: 'Escape: Check'`) || !strings.Contains(text, "description: |-\n    pipe | newline\n    summary\n") {
 		t.Fatalf("front matter not quoted safely:\n%s", text)
 	}
 	if !strings.Contains(text, `[Runtime Guide](runtime%20docs)`) {
