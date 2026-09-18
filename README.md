@@ -1,11 +1,87 @@
 # Loom
 
-Loom content generation and wiki compiler
+Loom is a content-generation and wiki-compiler service. It takes raw material
+— a title, a body, a source reference — and compiles it into a stored,
+structured, OKF-shaped wiki page, either deterministically (template
+substitution) or via a real LLM call (Anthropic). One SQLite-backed service
+layer is exposed over HTTP, CLI, and MCP.
 
-A **Sysop UI** application: a React frontend built on
-[`@hollis-labs/sysop-ui`](https://github.com/hollis-labs/sysop-ui) served by a
-Go binary through the [`go-webui`](https://github.com/hollis-labs/go-webui)
-embed harness. Scaffolded by `folio new sysop-ui`.
+Loom does not decide *what* to compile, *when*, or with what title and
+provenance — that's the caller's job (Fragments Engine's router, Nanite's
+Curator agent, or a person at the CLI). It is not a capture inbox, an agent
+runtime, or a recall store.
+
+> **Pre-release.** Loom runs today as a Cerberus-managed local daemon with
+> real callers — its MCP server is registered in agent-mux's catalog, and it
+> serves its own CLI directly. But the cross-repo pilot that exercises it
+> end-to-end (Fragments Engine → Nanite's Curator → Loom) is still being
+> verified, interfaces aren't stable, and there's no public release yet. This
+> README describes what's built and confirmed working, not the target state.
+
+## What it is today
+
+- **OKF-shaped pages, for real.** Compiled pages carry structured fields
+  (`type`, `tags`, `status`, `provenance`, `generated_by`/`generated_at`) as
+  real columns, not just synthesized at export time.
+- **Two compile paths.** Deterministic template substitution (no network
+  call, byte-for-byte predictable) or an LLM pass via Anthropic, with
+  pre-send redaction of secret-shaped content (API keys, tokens, PEM blocks)
+  before anything leaves the process.
+- **A confidence/diff signal on every compile job** — so a caller can tell a
+  safe write from one that needs review, instead of reinventing that
+  heuristic itself.
+- **Conformance checking** (OKF §11) at the page and bundle level, plus
+  structural verification (heading, summary, source, link count) on every
+  write.
+- **Directives** (`::draft`, `::log-adr`, `::reminder`, `::extract`) parsed
+  and ledgered independently of dispatch, so a directive-tagged fragment
+  becomes a compile job without a person triggering it by hand.
+- **Regenerable export** to a git-backed, Obsidian-browsable directory — the
+  exported tree is never hand-edited; it's rebuilt from the database.
+
+## Where it sits in the stack
+
+```
+  capture / routing    Fragments Engine — inbox, directive tagging, async routing
+         │
+    ┌─────────┐
+    │  Loom   │   compiles raw material → OKF-shaped wiki pages
+    └─────────┘   HTTP API · CLI · MCP server, one shared service layer
+         │
+   consumers          Nanite's Curator (writes), Weaver (reads via wiki_* MCP
+                       tools), agent-mux (MCP registration), a person at the CLI
+```
+
+Loom only compiles, stores, and serves. It never decides what's worth
+compiling or routes anything on its own — that judgment stays upstream.
+
+## Examples
+
+**Direct use.** `loom compile < page.md` compiles and stores a page from
+stdin; `loom pages conformance my-page` checks it against OKF §11 before
+anyone treats it as done.
+
+**Composition (the pilot in progress).** A note lands in Fragments Engine's
+inbox and gets tagged with an inline `::draft` marker. FE's router dispatches
+it, async, to Nanite's Curator agent. Curator fetches the fragment's content,
+calls Loom's compile API, and uses the returned `confidence_tier`/`diff` to
+decide whether to write the page directly or stage it for review. A second
+agent, Weaver, later answers questions against the compiled pages through
+Loom's `wiki_*` MCP tools, proposing updates back to Curator rather than
+writing directly. See [`docs/architecture.md`](docs/architecture.md) §6 for
+exactly what's confirmed working end-to-end versus still in progress.
+
+## Roadmap
+
+- **Finish the pilot integration end-to-end.** Loom's side (compile API,
+  confidence signal, MCP surface) is independently verified; the open item is
+  a tool-resolution issue in Nanite's agent runtime, tracked on the Nanite
+  side, not here.
+- **Beyond the wiki page.** The compiler, directive dispatcher, and API
+  surfaces are already general-purpose — `wiki_page` is just the one
+  generator blueprint that's fully built out today.
+- **Richer link relations.** `wiki_links.relation` is currently always
+  `"references"`; a real taxonomy is unbuilt.
 
 ## Layout
 
