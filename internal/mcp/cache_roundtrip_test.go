@@ -65,8 +65,8 @@ func TestMCPPageSearchCacheDeepDive(t *testing.T) {
 		Total int    `json:"total"`
 		Hint  string `json:"hint"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
-		t.Fatalf("unmarshal search envelope: %v (raw=%s)", err, raw)
+	if err := decodeAny(raw, &env); err != nil {
+		t.Fatalf("unmarshal search envelope: %v (raw=%+v)", err, raw)
 	}
 	if env.Total != 3 {
 		t.Fatalf("total = %d, want 3", env.Total)
@@ -90,8 +90,8 @@ func TestMCPPageSearchCacheDeepDive(t *testing.T) {
 		TotalSize int    `json:"total_size"`
 		Data      string `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(fetchRaw), &fetched); err != nil {
-		t.Fatalf("unmarshal fetch_result: %v (raw=%s)", err, fetchRaw)
+	if err := decodeAny(fetchRaw, &fetched); err != nil {
+		t.Fatalf("unmarshal fetch_result: %v (raw=%+v)", err, fetchRaw)
 	}
 	if fetched.TotalSize == 0 {
 		t.Fatal("expected non-zero total_size")
@@ -126,8 +126,8 @@ func TestMCPPageSearchCacheDeepDive(t *testing.T) {
 			Match string `json:"match"`
 		} `json:"matches"`
 	}
-	if err := json.Unmarshal([]byte(searchRaw), &searched); err != nil {
-		t.Fatalf("unmarshal search_result: %v (raw=%s)", err, searchRaw)
+	if err := decodeAny(searchRaw, &searched); err != nil {
+		t.Fatalf("unmarshal search_result: %v (raw=%+v)", err, searchRaw)
 	}
 	if len(searched.Matches) == 0 {
 		t.Fatal("expected loom_search_result to find the target page's slug in the cached result")

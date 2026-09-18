@@ -57,7 +57,7 @@ func TestMCPToolsReturnDeterministicJSON(t *testing.T) {
 	var job struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(raw), &job); err != nil {
+	if err := decodeAny(raw, &job); err != nil {
 		t.Fatalf("compile json: %v", err)
 	}
 	if job.Status != "completed" {
@@ -77,7 +77,7 @@ func TestMCPToolsReturnDeterministicJSON(t *testing.T) {
 			Slug string `json:"slug"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("search json: %v", err)
 	}
 	if env.Count != 1 || len(env.Items) != 1 || env.Items[0].Slug != "mcp-page" {
@@ -106,7 +106,7 @@ func TestMCPBundlePutAndGet(t *testing.T) {
 		Slug  string `json:"slug"`
 		Title string `json:"title"`
 	}
-	if err := json.Unmarshal([]byte(raw), &bundle); err != nil {
+	if err := decodeAny(raw, &bundle); err != nil {
 		t.Fatalf("bundle put json: %v", err)
 	}
 	if bundle.Slug != "team-wiki" || bundle.Title != "Team Wiki" {
@@ -116,7 +116,7 @@ func TestMCPBundlePutAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle get tool: %v", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &bundle); err != nil {
+	if err := decodeAny(raw, &bundle); err != nil {
 		t.Fatalf("bundle get json: %v", err)
 	}
 	if bundle.Slug != "team-wiki" {
@@ -146,7 +146,7 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 		BundleID int64  `json:"bundle_id"`
 		Status   string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(raw), &job); err != nil {
+	if err := decodeAny(raw, &job); err != nil {
 		t.Fatalf("compile json: %v", err)
 	}
 	if job.Status != "completed" {
@@ -170,7 +170,7 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 			Slug string `json:"slug"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("search json: %v", err)
 	}
 	if env.Count != 1 || env.Items[0].Slug != "defaulted-mcp" {
@@ -196,7 +196,7 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 	var exp struct {
 		Dir string `json:"dir"`
 	}
-	if err := json.Unmarshal([]byte(raw), &exp); err != nil {
+	if err := decodeAny(raw, &exp); err != nil {
 		t.Fatalf("export json: %v", err)
 	}
 	if exp.Dir != filepath.Join(".", "exports", "nanite") {
@@ -273,7 +273,7 @@ func TestMCPStatus(t *testing.T) {
 			CompileJobs int64 `json:"compile_jobs"`
 		} `json:"stats"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeAny(raw, &result); err != nil {
 		t.Fatalf("status json: %v", err)
 	}
 	if result.Status != "ok" || result.Stats.Bundles != 1 || result.Stats.Pages != 1 || result.Stats.CompileJobs != 1 {
@@ -457,7 +457,7 @@ func TestMCPPageLinks(t *testing.T) {
 			Target string `json:"target"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("links json: %v", err)
 	}
 	if env.Count != 2 || env.Items[0].Target != "runtime" || env.Items[1].Target != "compile-jobs" {
@@ -467,7 +467,7 @@ func TestMCPPageLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle links tool: %v", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("bundle links json: %v", err)
 	}
 	if env.Count != 2 {
@@ -503,7 +503,7 @@ func TestMCPPageVerifications(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("verifications json: %v", err)
 	}
 	if env.Count != 4 || env.Items[0].Kind != "heading" || env.Items[0].Status != "passed" {
@@ -513,7 +513,7 @@ func TestMCPPageVerifications(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle verifications tool: %v", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("bundle verifications json: %v", err)
 	}
 	if env.Count != 4 {
@@ -549,7 +549,7 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 			Rule string `json:"rule"`
 		} `json:"findings"`
 	}
-	if err := json.Unmarshal([]byte(raw), &pageReport); err != nil {
+	if err := decodeAny(raw, &pageReport); err != nil {
 		t.Fatalf("page conformance json: %v", err)
 	}
 	if !pageReport.Passed || len(pageReport.Findings) != 0 {
@@ -566,7 +566,7 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 			Passed bool `json:"passed"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &bundleEnv); err != nil {
+	if err := decodeAny(raw, &bundleEnv); err != nil {
 		t.Fatalf("bundle conformance json: %v", err)
 	}
 	if bundleEnv.Count != 1 || !bundleEnv.Items[0].Passed {
@@ -585,7 +585,7 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("page conformance tool (blank type): %v", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &pageReport); err != nil {
+	if err := decodeAny(raw, &pageReport); err != nil {
 		t.Fatalf("page conformance (blank type) json: %v", err)
 	}
 	if pageReport.Passed || len(pageReport.Findings) == 0 {
@@ -619,7 +619,7 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			ID int64 `json:"id"`
 		} `json:"jobs"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeAny(raw, &result); err != nil {
 		t.Fatalf("compile directives json: %v", err)
 	}
 	if len(result.Jobs) != 1 {
@@ -634,7 +634,7 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+	if err := decodeAny(raw, &detail); err != nil {
 		t.Fatalf("job get json: %v", err)
 	}
 	if len(detail.Events) != 3 || detail.Events[2].Status != "completed" {
@@ -652,7 +652,7 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			Command string `json:"command"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+	if err := decodeAny(raw, &entries); err != nil {
 		t.Fatalf("directive list json: %v", err)
 	}
 	if entries.Count != 1 || entries.Items[0].Hash == "" || entries.Items[0].Command != "note" {
@@ -665,7 +665,7 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 	var entry struct {
 		Hash string `json:"hash"`
 	}
-	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+	if err := decodeAny(raw, &entry); err != nil {
 		t.Fatalf("directive get json: %v", err)
 	}
 	if entry.Hash != entries.Items[0].Hash {
@@ -699,7 +699,7 @@ func TestMCPCompileFailureJobGet(t *testing.T) {
 		Status string `json:"status"`
 		Error  string `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(raw), &job); err != nil {
+	if err := decodeAny(raw, &job); err != nil {
 		t.Fatalf("compile json: %v", err)
 	}
 	if job.ID == 0 || job.Status != "failed" || job.Error == "" {
@@ -721,7 +721,7 @@ func TestMCPCompileFailureJobGet(t *testing.T) {
 			Message string `json:"message"`
 		} `json:"events"`
 	}
-	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+	if err := decodeAny(raw, &detail); err != nil {
 		t.Fatalf("job get json: %v", err)
 	}
 	if detail.Job.ID != job.ID || detail.Job.Status != "failed" || detail.Job.Error == "" {
@@ -763,7 +763,7 @@ func TestMCPCompileJobListFilters(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("job list json: %v", err)
 	}
 	if env.Count != 1 || env.Items[0].Status != "completed" {
@@ -791,7 +791,7 @@ func TestMCPTemplateTools(t *testing.T) {
 	var tpl struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(raw), &tpl); err != nil {
+	if err := decodeAny(raw, &tpl); err != nil {
 		t.Fatalf("put json: %v", err)
 	}
 	if tpl.Name != "wiki_page.compact" {
@@ -805,7 +805,7 @@ func TestMCPTemplateTools(t *testing.T) {
 	var env struct {
 		Count int `json:"count"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("list json: %v", err)
 	}
 	if env.Count != 2 {
@@ -822,7 +822,7 @@ func TestMCPTemplateTools(t *testing.T) {
 			Body  string `json:"body"`
 		} `json:"page"`
 	}
-	if err := json.Unmarshal([]byte(raw), &rendered); err != nil {
+	if err := decodeAny(raw, &rendered); err != nil {
 		t.Fatalf("render json: %v", err)
 	}
 	if rendered.Page.Title != "Rendered" || rendered.Page.Body != "# Rendered" {
@@ -858,7 +858,7 @@ func TestMCPIngestFiles(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"jobs"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeAny(raw, &result); err != nil {
 		t.Fatalf("ingest json: %v", err)
 	}
 	if result.Items != 1 || len(result.Jobs) != 1 || result.Jobs[0].Status != "completed" {
@@ -876,7 +876,7 @@ func TestMCPIngestFiles(t *testing.T) {
 			SourceKey string `json:"source_key"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+	if err := decodeAny(raw, &env); err != nil {
 		t.Fatalf("ingest list json: %v", err)
 	}
 	if env.Count != 1 || env.Items[0].Hash == "" || env.Items[0].SourceKey != path {
@@ -890,7 +890,7 @@ func TestMCPIngestFiles(t *testing.T) {
 	var entry struct {
 		Hash string `json:"hash"`
 	}
-	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+	if err := decodeAny(raw, &entry); err != nil {
 		t.Fatalf("ingest get json: %v", err)
 	}
 	if entry.Hash != env.Items[0].Hash {
@@ -920,7 +920,7 @@ func TestMCPIngestText(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"jobs"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeAny(raw, &result); err != nil {
 		t.Fatalf("ingest text json: %v", err)
 	}
 	if len(result.Jobs) != 1 || result.Jobs[0].Status != "completed" {
@@ -955,7 +955,7 @@ func TestMCPExportBundle(t *testing.T) {
 		Dir   string   `json:"dir"`
 		Files []string `json:"files"`
 	}
-	if err := json.Unmarshal([]byte(raw), &exp); err != nil {
+	if err := decodeAny(raw, &exp); err != nil {
 		t.Fatalf("export json: %v", err)
 	}
 	if exp.Dir != exportDir {
@@ -990,7 +990,7 @@ func TestMCPExportBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default export tool: %v", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &exp); err != nil {
+	if err := decodeAny(raw, &exp); err != nil {
 		t.Fatalf("default export json: %v", err)
 	}
 	if exp.Dir != filepath.Join(".", "exports", "nanite") {
@@ -1022,6 +1022,18 @@ func spanByName(t *testing.T, spans []trace.ReadOnlySpan, name string) trace.Rea
 	}
 	t.Fatalf("span %q not found in %+v", name, spans)
 	return nil
+}
+
+// decodeAny round-trips a tool result through JSON into out. go-mcp v0.5.0's
+// Server.CallTool returns a handler's raw Go value (a map or struct), not a
+// pre-marshaled JSON string, so tests that want to assert on typed fields
+// re-marshal it first rather than treating it as already-JSON text.
+func decodeAny(raw any, out any) error {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func requiredFields(t *testing.T, schema any) []string {

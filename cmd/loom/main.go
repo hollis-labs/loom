@@ -122,7 +122,7 @@ func mcpCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer otelRuntime.Shutdown()
-	return loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)).Run()
+	return loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)).Run(ctx)
 }
 
 // mcpOptions and serverConfig guard against a classic Go nil-interface

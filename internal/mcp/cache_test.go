@@ -188,8 +188,8 @@ func TestCacheListResult_CachesFullSetWhenOverThreshold(t *testing.T) {
 
 	items := []string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"}
 	out := cacheListResult(cache, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
-	if !strings.Contains(out, "wiki_result://") {
-		t.Fatalf("expected wiki_result:// pointer in output, got: %s", out)
+	if !strings.Contains(out.Hint, "wiki_result://") {
+		t.Fatalf("expected wiki_result:// pointer in output, got: %s", out.Hint)
 	}
 }
 
@@ -198,16 +198,16 @@ func TestCacheListResult_NoCacheWhenUnderThreshold(t *testing.T) {
 
 	items := []string{"a", "b"}
 	out := cacheListResult(cache, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
-	if strings.Contains(out, "wiki_result://") {
-		t.Fatalf("did not expect a cache pointer for a tiny result, got: %s", out)
+	if strings.Contains(out.Hint, "wiki_result://") {
+		t.Fatalf("did not expect a cache pointer for a tiny result, got: %s", out.Hint)
 	}
 }
 
 func TestCacheListResult_NilCacheIsNoOp(t *testing.T) {
 	items := []string{"a", "b", "c"}
 	out := cacheListResult(nil, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
-	if strings.Contains(out, "wiki_result://") {
-		t.Fatalf("nil cache must never produce a cache pointer, got: %s", out)
+	if strings.Contains(out.Hint, "wiki_result://") {
+		t.Fatalf("nil cache must never produce a cache pointer, got: %s", out.Hint)
 	}
 }
 
@@ -224,15 +224,15 @@ func TestCacheListResult_NoCacheForDefaultCallerID(t *testing.T) {
 	// that a real caller_id would have triggered caching.
 	for _, callerID := range []string{"default", ""} {
 		out := cacheListResult(cache, callerID, "test_list_tool", items, budget.Config{Limit: 10}, "")
-		if strings.Contains(out, "wiki_result://") {
-			t.Fatalf("callerID %q: expected no cache pointer (shared-bucket isolation risk), got: %s", callerID, out)
+		if strings.Contains(out.Hint, "wiki_result://") {
+			t.Fatalf("callerID %q: expected no cache pointer (shared-bucket isolation risk), got: %s", callerID, out.Hint)
 		}
 	}
 
 	// Confirm the threshold logic itself still works for a real caller_id -
 	// this isn't a blanket "caching is broken" regression.
 	out := cacheListResult(cache, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
-	if !strings.Contains(out, "wiki_result://") {
-		t.Fatalf("expected a cache pointer for a real caller_id, got: %s", out)
+	if !strings.Contains(out.Hint, "wiki_result://") {
+		t.Fatalf("expected a cache pointer for a real caller_id, got: %s", out.Hint)
 	}
 }
