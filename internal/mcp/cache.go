@@ -240,7 +240,7 @@ func (c *ResultCache) Purge() (int, error) {
 }
 
 // cacheListResult wraps budget.Apply for a wiki_* search/list tool. It
-// preserves the existing budget.Envelope JSON shape exactly
+// preserves the existing budget.Envelope shape exactly
 // (items/count/total/truncated/hint) - the only change visible to callers
 // is that, when the full (pre-budget-limit) item slice's JSON exceeds the
 // cache's soft-truncation threshold, a wiki_result://<id> pointer is
@@ -248,8 +248,13 @@ func (c *ResultCache) Purge() (int, error) {
 // loom_search_result to the full, untruncated result for callerID - the
 // deep-dive-by-id mechanism for CW-20260816-0014.
 //
-// cache may be nil, in which case this behaves exactly like the pre-cache
-// budget.ToolJSON(budget.Apply(...)) call sites it replaces.
+// The returned Envelope is a raw value, not a pre-marshaled JSON string:
+// go-mcp's ToolHandler contract (v0.5.0+) JSON-marshals a returned value
+// into CallToolResult.StructuredContent itself, so callers should return
+// this value directly from their tool handler rather than re-marshaling it.
+//
+// cache may be nil, in which case this behaves exactly like a plain
+// budget.Apply(...) call.
 // defaultCallerID is the sentinel every wiki_* list/search tool falls back
 // to when a caller omits caller_id (see tools.go's stringArg(args,
 // "caller_id", "default") call sites). cacheListResult refuses to cache
@@ -261,7 +266,7 @@ func (c *ResultCache) Purge() (int, error) {
 // deep-dive-by-id feature must identify themselves with a real caller_id.
 const defaultCallerID = "default"
 
-func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items []T, cfg budget.Config, hintTemplate string) string {
+func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items []T, cfg budget.Config, hintTemplate string) budget.Envelope {
 	env := budget.Apply(items, cfg, hintTemplate)
 	if cache != nil && strings.TrimSpace(callerID) != "" && callerID != defaultCallerID && len(items) > 0 {
 		if full, err := json.Marshal(items); err == nil && len(full) > cache.SoftTruncBytes() {
@@ -279,5 +284,5 @@ func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items
 			}
 		}
 	}
-	return budget.ToolJSON(env)
+	return env
 }
