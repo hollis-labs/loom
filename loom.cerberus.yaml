@@ -17,7 +17,7 @@ resources:
         - ./loom
         - serve
         - --addr
-        - :8092
+        - 127.0.0.1:8092
       dir: /Users/chrispian/dev/hollis-labs/apps/loom
       env:
         LOOM_OTEL_ENABLED: "1"
