@@ -31,3 +31,8 @@ Thumbs.db
 .env.local
 .loom/
 .nanite/
+
+# Local agent docs (not published)
+AGENTS.md
+CLAUDE.md
+docs/content-authoring-direction.md

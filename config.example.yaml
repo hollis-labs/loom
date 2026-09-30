@@ -6,7 +6,7 @@ paths:
 sources:
   git:
     - name: loom
-      path: ~/dev/hollis-labs/apps/loom
+      path: ~/src/loom
       exclude_paths: [".git", "node_modules", "dist"]
   claude_logs: ~/.claude
   chatgpt_local: ""

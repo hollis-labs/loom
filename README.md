@@ -4,19 +4,16 @@ Loom is a content-generation and wiki-compiler service. It takes raw material
 — a title, a body, a source reference — and compiles it into a stored,
 structured, OKF-shaped wiki page, either deterministically (template
 substitution) or via a real LLM call (Anthropic). One SQLite-backed service
-layer is exposed over HTTP, CLI, and MCP.
+layer is exposed over HTTP, CLI, and MCP. Loom does not decide *what* to
+compile, *when*, or with what title and provenance — that's the caller's job
+(Fragments Engine's router, Nanite's Curator agent, or a person at the CLI).
+It is not a capture inbox, an agent runtime, or a recall store.
 
-Loom does not decide *what* to compile, *when*, or with what title and
-provenance — that's the caller's job (Fragments Engine's router, Nanite's
-Curator agent, or a person at the CLI). It is not a capture inbox, an agent
-runtime, or a recall store.
-
-> **Pre-release.** Loom runs today as a Cerberus-managed local daemon with
-> real callers — its MCP server is registered in agent-mux's catalog, and it
-> serves its own CLI directly. But the cross-repo pilot that exercises it
-> end-to-end (Fragments Engine → Nanite's Curator → Loom) is still being
-> verified, interfaces aren't stable, and there's no public release yet. This
-> README describes what's built and confirmed working, not the target state.
+> **Pre-release.** Loom is unreleased, not deployed, and has no outside
+> consumers. It's being built in the open: the code, the docs, and this
+> README describe what exists today, not a pitch for what's planned.
+> Interfaces and behavior change without notice, and there are no
+> compatibility guarantees yet.
 
 ## What it is today
 
@@ -49,7 +46,7 @@ runtime, or a recall store.
     └─────────┘   HTTP API · CLI · MCP server, one shared service layer
          │
    consumers          Nanite's Curator (writes), Weaver (reads via wiki_* MCP
-                       tools), agent-mux (MCP registration), a person at the CLI
+                       tools), any MCP host, a person at the CLI
 ```
 
 Loom only compiles, stores, and serves. It never decides what's worth
@@ -75,53 +72,30 @@ exactly what's confirmed working end-to-end versus still in progress.
 
 - **Finish the pilot integration end-to-end.** Loom's side (compile API,
   confidence signal, MCP surface) is independently verified; the open item is
-  a tool-resolution issue in Nanite's agent runtime, tracked on the Nanite
-  side, not here.
+  a tool-resolution issue in Nanite's agent runtime, not in Loom.
 - **Beyond the wiki page.** The compiler, directive dispatcher, and API
   surfaces are already general-purpose — `wiki_page` is just the one
   generator blueprint that's fully built out today.
 - **Richer link relations.** `wiki_links.relation` is currently always
   `"references"`; a real taxonomy is unbuilt.
 
-## Layout
+## License
 
-```
-cmd/loom/   Go entrypoint — HTTP server + /api
-internal/webui/             //go:embed all:dist + the go-webui handler
-frontend/                   Vite + React frontend (the Sysop UI)
-  src/App.tsx               app shell — nav rail + page header
-  src/pages/                one page per screen
-  src/api/                  same-origin API client + typed context
-```
-
-The frontend builds into `internal/webui/dist/`, which the Go binary
-embeds — so a single binary serves both the API and the UI.
+MIT — see [LICENSE](LICENSE).
 
 ## Prerequisites
 
 - Go 1.26.6+
 - Node.js 20+ / npm
 
-## Develop
-
-Two processes during development:
-
-```sh
-make run      # Go server on :8080 (serves /api and the last UI build)
-make ui-dev   # Vite dev server with hot reload — proxies /api to :8080
-```
-
-Open the Vite dev server URL — the app is served under
-`//`, not the root path.
-
-## Build a release binary
+## Build
 
 ```sh
 make all      # ui-build (vite → internal/webui/dist) then build
 ./loom
 ```
 
-The Sysop UI is then served at <http://localhost:8080//>.
+The Sysop UI is then served at <http://localhost:8080/>.
 Before the first `make ui-build`, `go-webui` serves a "not built"
 placeholder in place of the app.
 
@@ -137,7 +111,7 @@ placeholder in place of the app.
 | `make lint` | `vet` plus golangci-lint/staticcheck/errcheck/govulncheck, each skipped if not installed |
 | `make clean` | Remove the built binary and `frontend/node_modules` |
 
-## Backend Interfaces
+## Quick start
 
 The same SQLite-backed Loom services are exposed through HTTP, CLI, and MCP:
 
@@ -172,6 +146,31 @@ Set `LOOM_OTEL_ENABLED=1` to enable OpenTelemetry traces and
 `LOOM_OTEL_METRICS_ENABLED=1` to enable traces plus Loom HTTP/MCP metrics.
 The equivalent CLI flags are `-otel`, `-otel-metrics`, and `-otel-endpoint`.
 
+## Develop
+
+Two processes during development:
+
+```sh
+make run      # Go server on :8080 (serves /api and the last UI build)
+make ui-dev   # Vite dev server with hot reload — proxies /api to :8080
+```
+
+Open the Vite dev server URL — the app is served at the root path.
+
+## Layout
+
+```
+cmd/loom/   Go entrypoint — HTTP server + /api
+internal/webui/             //go:embed all:dist + the go-webui handler
+frontend/                   Vite + React frontend (the Sysop UI)
+  src/App.tsx               app shell — nav rail + page header
+  src/pages/                one page per screen
+  src/api/                  same-origin API client + typed context
+```
+
+The frontend builds into `internal/webui/dist/`, which the Go binary
+embeds — so a single binary serves both the API and the UI.
+
 ## Adding a page
 
 A page is generic kit chrome plus app-specific content. Add a component
@@ -190,6 +189,8 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 - **`github.com/hollis-labs/go-webui`** (`v0.1.0`) —
   the SPA-serving harness.
 
-## License
+## Documentation
 
-MIT — see [LICENSE](./LICENSE).
+- [`docs/architecture.md`](docs/architecture.md) — data model, compile
+  pipeline, directives, the HTTP/CLI/MCP surfaces, and the current status of
+  the cross-repo pilot.

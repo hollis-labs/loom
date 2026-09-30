@@ -2,7 +2,7 @@
 
 **Status:** implemented (Go rewrite). This document describes the system as it actually exists and runs today, not the original pre-implementation design proposal. Where the pilot integration with Fragments Engine and Nanite is still being verified end-to-end, that's called out explicitly rather than assumed.
 
-Loom is the Go backend at `github.com/hollis-labs/loom` — a content-generation and wiki-compiler service. It replaces the earlier Python "Ion" prototype; there is no dependency on Ion's codebase or database anywhere in this system. If you're looking for Loom's data, code, or running service, everything is here, in this repo, not in `apps/ion`.
+Loom is the Go backend at `github.com/hollis-labs/loom` — a content-generation and wiki-compiler service. It replaces an earlier Python prototype; there is no dependency on that prototype's code or database anywhere in this system.
 
 ---
 
@@ -82,48 +82,43 @@ All three surfaces expose materially the same operations. Highlights:
 
 This is the part of the design that's genuinely cross-repo, and where "implemented" and "verified working end-to-end" currently diverge. Read this section as status, not promise.
 
-**The intended flow** (per the original pilot design, §10 of the archived planning doc):
+**The intended flow:**
 
 1. **Capture** — raw material lands in Fragments Engine's existing inbox (chat logs, notes, files, URLs — no new capture surface).
 2. **Tag** — FE's ingest pipeline runs `go-directives` over incoming content; anything containing an inline `::draft`/`::log-adr`/`::reminder`/`::extract` marker gets tagged with a `directive` entity.
-3. **Route** — FE's rule-based router (`Route{MatchEntityKind: "directive", MatchEntityValue: ""}` — deliberately broad, matches any directive-tagged fragment; Curator does the classification, not FE) matches and dispatches to a `callback`-kind destination. Callback dispatch is **always async** — enqueued through FE's existing delivery queue, never attempted inline on the routing hot path, regardless of destination health.
-4. **Wake** — the queued job eventually fires a `POST` to Nanite's Curator wake endpoint (`http://127.0.0.1:8090/api/loom/curator-wake` in this local dev setup) with an opaque payload: `{"generator": "wiki_page", "fragment": {"id", "source", "source_type", "source_id", "title", "canonical_path"}}`. **No body content is included** — this is deliberate (FE never sends template/generation content, only an identifying pointer); the receiving agent has to fetch the fragment's actual content itself.
-5. **Compile** — Curator (a Nanite durable agent, `class: process`, fresh session per wake) is meant to fetch the fragment's content, call Loom's compile API, and use the response's `confidence_tier`/`diff` to decide whether to write directly or stage the result for review.
-6. **Recall** — a second durable agent, Weaver (`class: advisor`), answers questions against Loom's compiled pages using the `wiki_*` MCP tools, proposing updates back to Curator rather than writing directly.
+3. **Route** — FE's rule-based router matches any directive-tagged fragment (deliberately broad; Curator does the classification, not FE) and dispatches to a `callback`-kind destination. Callback dispatch is **always async** — enqueued through FE's delivery queue, never attempted inline on the routing hot path.
+4. **Wake** — the queued job fires a `POST` to Nanite's Curator wake endpoint with an opaque payload: `{"generator": "wiki_page", "fragment": {"id", "source", "source_type", "source_id", "title", "canonical_path"}}`. **No body content is included** — FE only sends an identifying pointer; the receiving agent fetches the fragment's content itself.
+5. **Compile** — Curator (a Nanite durable agent, fresh session per wake) fetches the fragment's content, calls Loom's compile API, and uses the response's `confidence_tier`/`diff` to decide whether to write directly or stage the result for review.
+6. **Recall** — a second durable agent, Weaver, answers questions against Loom's compiled pages using the `wiki_*` MCP tools, proposing updates back to Curator rather than writing directly.
 
-**What's actually confirmed working, end to end, via live testing (not just code review):**
-- FE's directive tagging, routing, and async callback dispatch — verified repeatedly; a directive-tagged fragment reliably reaches Curator's wake endpoint.
-- The wake mechanism itself — Curator genuinely wakes, gets a fresh session, and runs a real multi-turn Anthropic conversation. (This required three real bug fixes on Nanite's side along the way: the wake payload wasn't reaching anywhere the chat loop actually reads; process-class durable agents were only wakeable once, ever, due to a stale-status check; a since-removed Anthropic model snapshot was pinned in config.)
-- Loom's compile API, confidence/diff signal, and MCP tool surface — all fully functional and independently verified (real LLM compiles, real confidence scoring on repeat compiles, real OTel traces).
+**Confirmed working end to end, via live testing:**
+- FE's directive tagging, routing, and async callback dispatch — a directive-tagged fragment reliably reaches Curator's wake endpoint.
+- The wake mechanism itself — Curator wakes, gets a fresh session, and runs a real multi-turn conversation.
+- Loom's compile API, confidence/diff signal, and MCP tool surface — independently verified (real LLM compiles, real confidence scoring on repeat compiles, real OTel traces).
 
-**What's not yet working:** Curator has not yet successfully produced a compiled page from a live fragment. The blocker has moved through several layers as it's been debugged — tool-catalog visibility, then a broader tool-binding regression, then tool-name mismatches — and as of this writing has narrowed to: `get_fragment_detail` now resolves as a real, callable tool, but the call itself fails (error detail not yet surfaced), and Curator doesn't retry or fall back to an alternative path when that happens. This is being actively investigated on the Nanite side. **Loom's own side of this integration is not the open question** — everything Loom is responsible for (the compile API, the confidence signal, the MCP tool surface) has been independently verified working; the gap is entirely in how Nanite's agent runtime resolves and calls tools during a durable-agent turn.
-
-Weaver, Curator's scheduled lint+export tick, and the check-before-answer/capture-on-discovery reflex pair are code-complete on the Nanite side (Torque status: `review`) but unverified end-to-end, pending the same tool-resolution fix.
+**Not yet working:** Curator has not yet produced a compiled page from a live fragment. The open issue is in how Nanite's agent runtime resolves and calls tools during a durable-agent turn, not in anything Loom is responsible for. Weaver and Curator's scheduled lint+export tick are code-complete on the Nanite side but unverified end-to-end, pending the same fix.
 
 ---
 
 ## 7. Deployment
 
-Loom runs as a Cerberus-managed local daemon (not a raw `go install`/PATH binary): resource `loom-dev`, config at `~/.cerberus/projects/loom.cerberus.yaml` (centrally, not in this repo — matching the convention every other local service in this environment follows), artifact-backed, port `8092`, `env: {ANTHROPIC_API_KEY, LOOM_OTEL_ENABLED}`.
+Loom runs as a single binary: `loom serve` hosts the HTTP API, the embedded UI, and `/mcp`; `loom mcp` runs the stdio MCP server. In the author's setup it runs as a local daemon managed by [Cerberus](https://github.com/hollis-labs/cerberus) (see `loom.cerberus.yaml`), with `ANTHROPIC_API_KEY` and `LOOM_OTEL_ENABLED` in its environment.
 
-Loom's MCP server (`loom mcp`, stdio) is registered as an upstream in agent-mux's catalog (`~/.agent-mux/catalog/mcp-servers/loom.yaml`), pointed at the same SQLite store the HTTP daemon uses via an explicit `-db` path (Loom's CLI defaults to project-relative paths unless told otherwise, and agent-mux spawns it from its own working directory, not this repo).
+The CLI resolves project-local `.loom/` paths by default, so which database you get depends on the working directory. Any MCP host that spawns `loom mcp` from its own working directory should pass an explicit `-db` path pointing at the same SQLite store the HTTP daemon uses.
 
-OTel tracing is opt-in (`LOOM_OTEL_ENABLED=1`), exporting to a shared local Jaeger collector (`http://127.0.0.1:4318`) — confirmed working, traces show up under service name `loom`. Metrics export is deliberately left off: Jaeger's OTLP receiver only implements the traces service, not metrics.
+OTel tracing is opt-in (`LOOM_OTEL_ENABLED=1`) and exports over OTLP HTTP (for example to a local Jaeger collector at `http://127.0.0.1:4318`); traces show up under service name `loom`. Metrics export is opt-in separately (`LOOM_OTEL_METRICS_ENABLED=1`) — Jaeger's OTLP receiver only implements traces, so point metrics at a collector that accepts them.
 
 ---
 
-## 8. Known gaps and open follow-ups
+## 8. Known gaps
 
-Tracked in Torque, not reproduced here in full — check current status there rather than trusting this list to stay fresh:
-
-- **FE route fan-out** (`CW-20260816-0086`) — one fragment can only match and fire one FE route today; a fragment needing to become both a Loom wiki page and, say, a Torque task can't do both from a single route match yet.
-- **OTel default-polarity inconsistency** (`CW-20260817-0001`) — Loom defaults OTel off (opt-in), Nanite defaults it on (opt-out), Fragments Engine doesn't wire it up at all. No portfolio-wide convention exists yet.
-- **Fragments Engine OTel support** (`CW-20260817-0002`) — FE has no tracing/metrics instrumentation at all currently.
-- **`loom directives compile` CLI subcommand** (`CW-20260816-0085`) — the directive-dispatch path is reachable via HTTP and MCP but not the CLI (`loom directives` only has `parse|list|get`).
-- **The Curator tool-resolution gap** described in §6 — actively being investigated; no Torque ticket filed yet as of this writing since the root cause is still moving.
+- **FE route fan-out** — one fragment can only match and fire one FE route today; a fragment that should become both a Loom wiki page and, say, a Torque task can't do both from a single route match yet.
+- **OTel default polarity** — Loom defaults OTel off (opt-in) while Nanite defaults it on; there's no portfolio-wide convention yet.
+- **`loom directives compile` CLI subcommand** — the directive-dispatch path is reachable via HTTP and MCP but not the CLI (`loom directives` only has `parse|list|get`).
+- **The Curator tool-resolution gap** described in §6.
 
 ---
 
 ## 9. What this document deliberately does not cover
 
-The original pre-implementation design doc (written before any of this existed, oriented around Karpathy's llm-wiki gist, OKF v0.2, and a from-scratch Curator/Weaver proposal) covered a broader vision — meta and personal wikis beyond the single `nanite` pilot bundle, multi-bundle query routing in Weaver, a Tesseract pointer-sync mirror, output fan-out across multiple generator types, non-text (infographic) generation. None of that is built, and none of it is implied by anything in this document. This document describes what runs today; treat anything not mentioned here as not yet built, not as an oversight.
+The original pre-implementation design (oriented around Karpathy's llm-wiki gist, OKF v0.2, and a from-scratch Curator/Weaver proposal) covered a broader vision — meta and personal wikis beyond the single `nanite` pilot bundle, multi-bundle query routing in Weaver, a Tesseract pointer-sync mirror, output fan-out across multiple generator types, non-text (infographic) generation. None of that is built, and none of it is implied by anything in this document. This document describes what runs today; treat anything not mentioned here as not yet built, not as an oversight.
