@@ -149,7 +149,7 @@ func serve(ctx context.Context, args []string) error {
 		return err
 	}
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	addr := fs.String("addr", ":8080", "HTTP listen address")
+	addr := fs.String("addr", "127.0.0.1:8080", "HTTP listen address (use :8080 to listen on all interfaces)")
 	otelEnabled := fs.Bool("otel", loomotel.EnabledFromEnv(), "enable OpenTelemetry export")
 	otelMetrics := fs.Bool("otel-metrics", loomotel.MetricsEnabledFromEnv(), "enable OpenTelemetry HTTP metrics")
 	otelEndpoint := fs.String("otel-endpoint", "", "OTLP HTTP endpoint host:port")

@@ -95,7 +95,10 @@ make all      # ui-build (vite → internal/webui/dist) then build
 ./loom
 ```
 
-The Sysop UI is then served at <http://localhost:8080/>.
+The Sysop UI is then served at <http://localhost:8080/>. Loom listens on
+`127.0.0.1:8080` by default. The HTTP API has no authentication and can
+trigger paid LLM calls, so only widen it (`-addr :8080`) on a trusted network
+or behind an authenticating proxy.
 Before the first `make ui-build`, `go-webui` serves a "not built"
 placeholder in place of the app.
 
