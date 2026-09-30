@@ -149,11 +149,17 @@ func serve(ctx context.Context, args []string) error {
 		return err
 	}
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:8080", "HTTP listen address (use :8080 to listen on all interfaces)")
+	addr := fs.String("addr", "127.0.0.1:8080", "HTTP listen address; a non-loopback address (e.g. :8080) requires --token")
+	token := fs.String("token", "", "bearer token required on /api and /mcp (default $LOOM_API_TOKEN)")
+	corsOrigins := fs.String("cors-origin", "", "comma-separated browser origins allowed besides loopback ones (default $LOOM_CORS_ORIGINS)")
 	otelEnabled := fs.Bool("otel", loomotel.EnabledFromEnv(), "enable OpenTelemetry export")
 	otelMetrics := fs.Bool("otel-metrics", loomotel.MetricsEnabledFromEnv(), "enable OpenTelemetry HTTP metrics")
 	otelEndpoint := fs.String("otel-endpoint", "", "OTLP HTTP endpoint host:port")
 	_ = fs.Parse(args)
+	sec := serveSecurity(*token, *corsOrigins)
+	if err := loomserver.ValidateBind(*addr, sec.Token); err != nil {
+		return err
+	}
 	repo, comp, cleanup, err := openApp(ctx, appArgs)
 	if err != nil {
 		return err
@@ -177,8 +183,30 @@ func serve(ctx context.Context, args []string) error {
 	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)), httptransport.HandlerOptions{}))
 	webui.Mount(mux)
 
-	log.Printf("Loom listening on http://localhost%s/", *addr)
-	return loomserver.Serve(ctx, loomserver.New(serverConfig(*addr, mux, otelRuntime, loomRoute)))
+	auth := "disabled (loopback only)"
+	if sec.Token != "" {
+		auth = "bearer token required"
+	}
+	log.Printf("Loom listening on http://%s/ (API auth: %s)", *addr, auth)
+	return loomserver.Serve(ctx, loomserver.New(serverConfig(*addr, loomserver.Protect(mux, sec), otelRuntime, loomRoute)))
+}
+
+// serveSecurity resolves the API security policy: flags win over
+// LOOM_API_TOKEN / LOOM_CORS_ORIGINS.
+func serveSecurity(token, corsOrigins string) loomserver.Security {
+	if token == "" {
+		token = os.Getenv("LOOM_API_TOKEN")
+	}
+	if corsOrigins == "" {
+		corsOrigins = os.Getenv("LOOM_CORS_ORIGINS")
+	}
+	sec := loomserver.Security{Token: strings.TrimSpace(token)}
+	for _, origin := range strings.Split(corsOrigins, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			sec.CORSOrigins = append(sec.CORSOrigins, origin)
+		}
+	}
+	return sec
 }
 
 func serverConfig(addr string, handler http.Handler, otelRuntime loomotel.Runtime, routeResolver func(*http.Request) string) loomserver.Config {
