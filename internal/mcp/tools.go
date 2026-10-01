@@ -27,7 +27,8 @@ type ToolRecorder interface {
 }
 
 type Options struct {
-	Recorder ToolRecorder
+	ExportRoot string
+	Recorder   ToolRecorder
 }
 
 func NewServer(repo *storage.Repository, compiler *service.Compiler) *gmcp.Server {
@@ -273,7 +274,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		return entry, nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_export_bundle", Description: "Export a bundle as OKF-style markdown files.", InputSchema: obj(map[string]any{"bundle": str(), "dir": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
-		exp, err := exporter.ExportBundle(ctx, repo, stringArg(args, "bundle", "nanite"), stringArg(args, "dir", ""))
+		exp, err := exporter.ExportBundle(ctx, repo, stringArg(args, "bundle", "nanite"), stringArg(args, "dir", ""), opts.ExportRoot)
 		if err != nil {
 			return nil, err
 		}
