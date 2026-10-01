@@ -3,8 +3,6 @@ package exporter
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -25,7 +23,7 @@ type pageArtifact struct {
 	Verifications []domain.Verification
 }
 
-func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir string) (BundleExport, error) {
+func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir, exportRoot string) (BundleExport, error) {
 	b, err := repo.GetBundle(ctx, bundleSlug)
 	if err != nil {
 		return BundleExport{}, err
@@ -34,12 +32,11 @@ func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir
 	if err != nil {
 		return BundleExport{}, err
 	}
-	if dir == "" {
-		dir = filepath.Join(".", "exports", b.Slug)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	root, dir, err := openExportDir(exportRoot, dir, b.Slug)
+	if err != nil {
 		return BundleExport{}, err
 	}
+	defer root.Close()
 	artifacts := make([]pageArtifact, 0, len(pages))
 	for _, p := range pages {
 		links, err := repo.ListPageLinks(ctx, p.ID)
@@ -55,17 +52,16 @@ func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir
 	var files []string
 	for _, artifact := range artifacts {
 		name := artifact.Page.Slug + ".md"
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(pageMarkdown(artifact)), 0o644); err != nil {
+		if err := writeArtifact(root, name, []byte(pageMarkdown(artifact))); err != nil {
 			return BundleExport{}, err
 		}
 		files = append(files, name)
 	}
 	sort.Strings(files)
-	if err := os.WriteFile(filepath.Join(dir, "index.md"), []byte(indexMarkdown(b, pages)), 0o644); err != nil {
+	if err := writeArtifact(root, "index.md", []byte(indexMarkdown(b, pages))); err != nil {
 		return BundleExport{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "log.md"), []byte(logMarkdown(b, artifacts)), 0o644); err != nil {
+	if err := writeArtifact(root, "log.md", []byte(logMarkdown(b, artifacts))); err != nil {
 		return BundleExport{}, err
 	}
 	files = append([]string{"index.md", "log.md"}, files...)

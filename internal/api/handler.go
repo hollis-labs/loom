@@ -17,12 +17,19 @@ import (
 )
 
 type Handler struct {
-	repo     *storage.Repository
-	compiler *service.Compiler
+	exportRoot string
+	repo       *storage.Repository
+	compiler   *service.Compiler
 }
 
 func New(repo *storage.Repository, compiler *service.Compiler) *Handler {
 	return &Handler{repo: repo, compiler: compiler}
+}
+
+// WithExportRoot sets the operator-owned export root before registering routes.
+func (h *Handler) WithExportRoot(root string) *Handler {
+	h.exportRoot = root
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -171,7 +178,7 @@ func (h *Handler) bundle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		exp, err := exporter.ExportBundle(r.Context(), h.repo, parts[0], req.Dir)
+		exp, err := exporter.ExportBundle(r.Context(), h.repo, parts[0], req.Dir, h.exportRoot)
 		respond(w, exp, err)
 	default:
 		notFound(w)

@@ -820,7 +820,7 @@ func TestHTTPBundleExport(t *testing.T) {
 	}
 	repo := storage.NewRepository(db)
 	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	api.New(repo, service.NewCompiler(repo)).WithExportRoot(filepath.Join(dir, "exports")).Register(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Export Page\",\"summary\":\"summary\",\"body\":\"See [[Other Page]].\",\"source\":\"test\"}"}`))
 	rec := httptest.NewRecorder()
@@ -829,7 +829,7 @@ func TestHTTPBundleExport(t *testing.T) {
 		t.Fatalf("compile status = %d body = %s", rec.Code, rec.Body.String())
 	}
 
-	exportDir := filepath.Join(dir, "exported")
+	exportDir := filepath.Join(dir, "exports", "exported")
 	req = httptest.NewRequest(http.MethodPost, "/api/bundles/nanite/export", strings.NewReader(`{"dir":"`+exportDir+`"}`))
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

@@ -29,7 +29,7 @@ func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 	dir := t.TempDir()
-	exp, err := exporter.ExportBundle(ctx, repo, "nanite", dir)
+	exp, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir)
 	if err != nil {
 		t.Fatalf("ExportBundle: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestExportBundlePageFrontmatterIsFullOKFShape(t *testing.T) {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 	dir := t.TempDir()
-	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir); err != nil {
+	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err != nil {
 		t.Fatalf("ExportBundle: %v", err)
 	}
 	page, err := os.ReadFile(filepath.Join(dir, "runtime-notes.md"))
@@ -155,7 +155,7 @@ func TestExportBundleEscapesMarkdownControlCharacters(t *testing.T) {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 	dir := t.TempDir()
-	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir); err != nil {
+	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err != nil {
 		t.Fatalf("ExportBundle: %v", err)
 	}
 	page, err := os.ReadFile(filepath.Join(dir, "escape-check.md"))
