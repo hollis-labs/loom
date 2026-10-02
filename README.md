@@ -208,3 +208,27 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 - [`docs/architecture.md`](docs/architecture.md) — data model, compile
   pipeline, directives, the HTTP/CLI/MCP surfaces, and the current status of
   the cross-repo pilot.
+
+### HTTP authentication
+
+`loom serve` defaults to tokenless loopback (`127.0.0.1:8080`). A non-loopback
+bind requires `LOOM_API_TOKEN` or `-token`. With a token, `/api/*` and `/mcp`
+require `Authorization: Bearer <token>`, including loopback requests. Exact
+GET/HEAD `/api/health` stays available for probes. CLI and stdio `loom mcp`
+keep their existing behavior.
+
+For Docker, supply a runtime secret; the image intentionally has no baked-in token:
+
+```sh
+docker run --rm -p 8080:8080 -e LOOM_API_TOKEN="$LOOM_API_TOKEN" loom
+```
+
+Without the environment token, Docker's `-addr=:8080` command fails before
+opening the database. The UI prompts on a 401 and stores the token only in the
+current tab's sessionStorage. A later 401 clears it and prompts again; canceling
+or a rejected retry reports the request error. Tokens never appear in URLs.
+Browser origins must be loopback or listed in `LOOM_CORS_ORIGINS` / `-cors-origin`
+(comma-separated exact origins). There is no wildcard CORS allowance.
+
+Browser bearer regressions run with Node 24:
+`node --test frontend/src/api/auth.test.mjs`.
