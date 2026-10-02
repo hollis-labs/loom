@@ -110,6 +110,10 @@ func mcpCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup()
+	exportRoot, err := configuredExportRoot(appArgs)
+	if err != nil {
+		return err
+	}
 	otelRuntime, err := loomotel.InitRuntime(ctx, loomotel.Config{
 		Enabled:        *otelEnabled,
 		MetricsEnabled: *otelMetrics,
@@ -122,7 +126,7 @@ func mcpCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer otelRuntime.Shutdown()
-	return loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)).Run(ctx)
+	return loommcp.NewServerWithOptions(repo, comp, mcpOptionsWithRoot(otelRuntime, exportRoot)).Run(ctx)
 }
 
 // mcpOptions and serverConfig guard against a classic Go nil-interface
@@ -140,6 +144,12 @@ func mcpOptions(otelRuntime loomotel.Runtime) loommcp.Options {
 	if otelRuntime.Recorder != nil {
 		opts.Recorder = otelRuntime.Recorder
 	}
+	return opts
+}
+
+func mcpOptionsWithRoot(runtime loomotel.Runtime, root string) loommcp.Options {
+	opts := mcpOptions(runtime)
+	opts.ExportRoot = root
 	return opts
 }
 
@@ -165,6 +175,10 @@ func serve(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup()
+	exportRoot, err := configuredExportRoot(appArgs)
+	if err != nil {
+		return err
+	}
 	otelRuntime, err := loomotel.InitRuntime(ctx, loomotel.Config{
 		Enabled:        *otelEnabled,
 		MetricsEnabled: *otelMetrics,
@@ -179,8 +193,8 @@ func serve(ctx context.Context, args []string) error {
 	defer otelRuntime.Shutdown()
 
 	mux := http.NewServeMux()
-	api.New(repo, comp).Register(mux)
-	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, mcpOptions(otelRuntime)), httptransport.HandlerOptions{}))
+	api.New(repo, comp).WithExportRoot(exportRoot).Register(mux)
+	mux.Handle("/mcp", httptransport.NewHandler(loommcp.NewServerWithOptions(repo, comp, mcpOptionsWithRoot(otelRuntime, exportRoot)), httptransport.HandlerOptions{}))
 	webui.Mount(mux)
 
 	auth := "disabled (loopback only)"
@@ -782,7 +796,11 @@ func exportCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup()
-	exp, err := exporter.ExportBundle(ctx, repo, *bundle, exportDir)
+	exportRoot, err := configuredExportRoot(appArgs)
+	if err != nil {
+		return err
+	}
+	exp, err := exporter.ExportBundle(ctx, repo, *bundle, exportDir, exportRoot)
 	if err != nil {
 		return err
 	}
@@ -790,6 +808,14 @@ func exportCLI(ctx context.Context, args []string) error {
 }
 
 func defaultExportDir(args []string, bundle string) (string, error) {
+	root, err := configuredExportRoot(args)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, storage.Slug(bundle)), nil
+}
+
+func configuredExportRoot(args []string) (string, error) {
 	layout, err := resolveLayout(args)
 	if err != nil {
 		return "", err
@@ -798,7 +824,7 @@ func defaultExportDir(args []string, bundle string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(cfg.Paths.ExportDir, storage.Slug(bundle)), nil
+	return cfg.Paths.ExportDir, nil
 }
 
 func directivesCLI(args []string) error {

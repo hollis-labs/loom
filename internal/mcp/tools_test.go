@@ -136,7 +136,7 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
 
 	raw, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"input": "# Defaulted MCP\n\nBody"})
 	if err != nil {
@@ -199,7 +199,7 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 	if err := decodeAny(raw, &exp); err != nil {
 		t.Fatalf("export json: %v", err)
 	}
-	if exp.Dir != filepath.Join(".", "exports", "nanite") {
+	if exp.Dir != filepath.Join(dir, "exports", "nanite") {
 		t.Fatalf("export dir = %q", exp.Dir)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "<nil>")); !os.IsNotExist(err) {
@@ -940,13 +940,13 @@ func TestMCPExportBundle(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
 
 	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Export","summary":"summary","body":"See [[Other Page]].","source":"test"}`}); err != nil {
 		t.Fatalf("compile tool: %v", err)
 	}
 
-	exportDir := filepath.Join(dir, "exported")
+	exportDir := filepath.Join(dir, "exports", "exported")
 	raw, err := srv.CallTool(ctx, "loom_export_bundle", map[string]any{"bundle": "nanite", "dir": exportDir})
 	if err != nil {
 		t.Fatalf("export tool: %v", err)
@@ -993,7 +993,7 @@ func TestMCPExportBundle(t *testing.T) {
 	if err := decodeAny(raw, &exp); err != nil {
 		t.Fatalf("default export json: %v", err)
 	}
-	if exp.Dir != filepath.Join(".", "exports", "nanite") {
+	if exp.Dir != filepath.Join(dir, "exports", "nanite") {
 		t.Fatalf("default export dir = %q", exp.Dir)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "exports", "nanite", "mcp-export.md")); err != nil {

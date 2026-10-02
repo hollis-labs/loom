@@ -129,6 +129,17 @@ loom export -bundle nanite         # write OKF-style markdown export
 loom directives parse < notes.md   # preview directives from text
 ```
 
+Exports on the CLI, MCP (`loom_export_bundle`), and HTTP share the operator's
+`paths.export_dir` from `config.yaml` (by default the app data directory's
+`exports` directory). An omitted `dir` writes to `<export_dir>/<bundle>`;
+relative directories resolve under that root, and absolute directories must
+stay inside it. Traversal and symlink escapes are refused. Existing output
+symlinks are refused, and files are replaced atomically to avoid modifying
+external hardlink targets. A missing export root disables export rather than
+falling back to the process working directory. Configure a dedicated export
+root: caller identity and per-caller authorization remain separate work
+(CW-20260930-0253).
+
 `loom compile`'s input (stdin or `-input`) may be plain text, which becomes
 the page body verbatim, or a JSON `compiler.Request` object
 (`title`/`slug`/`type`/`summary`/`body`/`source`/`template`/`generation_mode`).
