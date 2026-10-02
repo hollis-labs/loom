@@ -27,13 +27,16 @@ disclosure; response times are best effort.
 ## Deployment boundary
 
 `loom serve` hosts the HTTP API, the embedded Sysop UI and a `/mcp` endpoint on
-one listener. **None of it is authenticated.** Anyone who can reach the
-listener can read, create and delete pages and can trigger compile jobs that
-call a paid LLM using your `ANTHROPIC_API_KEY`.
+one listener. Loopback works without a token, with loopback Host checks against
+DNS rebinding. Non-loopback binds require `LOOM_API_TOKEN` or `-token`. With a
+token, every API/MCP request needs a bearer, apart from exact GET/HEAD health
+checks and preflights. The static UI is public; its API client prompts on 401
+and keeps the token in tab-scoped sessionStorage. The token grants the whole
+API, including compile jobs that may call a paid LLM.
 
-- The listener defaults to `127.0.0.1:8080`. Only widen it (`-addr :8080`, as
-  the Dockerfile does) on a trusted network or behind an authenticating reverse
-  proxy that also provides TLS.
+- Supply the Docker token at runtime; never bake it into the image.
+- Browser Origins must be loopback or explicitly allowed by `LOOM_CORS_ORIGINS`
+  or `-cors-origin`; requests without Origin work for CLI clients.
 - Loom provides no TLS and no rate limiting.
 - `loom mcp` (stdio) trusts whatever process launched it.
 - The MCP result cache keys on caller ID and never caches under the `"default"`
@@ -60,7 +63,7 @@ committed config. Optional OpenTelemetry export is off unless
 
 ## Current security limitations
 
-- no authentication or authorization on the HTTP, UI or `/mcp` surfaces
+- one shared bearer token; no per-user authorization
 - no built-in TLS
 - no at-rest encryption
 - pre-release contracts and schema

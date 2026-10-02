@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -179,5 +180,15 @@ filters:
 	}
 	if !reflect.DeepEqual(redactions, []string{"token"}) {
 		t.Fatalf("explicit redactions = %+v", redactions)
+	}
+}
+
+func TestServeRefusesDockerBindWithoutToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOOM_API_TOKEN", "")
+	t.Chdir(t.TempDir())
+	err := serve(context.Background(), []string{"-project=false", "-addr=:8080"})
+	if err == nil || !strings.Contains(err.Error(), "refusing to listen") {
+		t.Fatalf("serve Docker bind = %v", err)
 	}
 }
