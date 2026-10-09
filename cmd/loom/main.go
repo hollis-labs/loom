@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	paths "github.com/hollis-labs/go-apppaths/paths"
-	httptransport "github.com/hollis-labs/go-mcp/transport/http"
+	httptransport "github.com/hollis-labs/libs/plugin-mcp/go-mcp/transport/http"
+	paths "github.com/hollis-labs/libs/util/apppaths"
 	"github.com/hollis-labs/loom/internal/api"
 	"github.com/hollis-labs/loom/internal/compiler"
 	loomconfig "github.com/hollis-labs/loom/internal/config"

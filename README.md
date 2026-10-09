@@ -200,7 +200,7 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
   kit + canonical theme. Consumed as a git dependency, pinned to a release
   tag. For local kit development, link a working copy:
   `npm install file:<path-to>/libs/sysop-ui` from `frontend/`.
-- **`github.com/hollis-labs/go-webui`** (`v0.1.0`) —
+- **`github.com/hollis-labs/libs/ui-go/webui`** (module `libs/ui-go v0.1.0`) —
   the SPA-serving harness.
 
 ## Documentation

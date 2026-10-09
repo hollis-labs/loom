@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	otelprop "github.com/hollis-labs/go-otel/propagation"
+	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/mcp"
 	"github.com/hollis-labs/loom/internal/service"

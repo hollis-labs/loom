@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	hotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel"
 )
 

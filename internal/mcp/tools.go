@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-mcp/budget"
-	gmcp "github.com/hollis-labs/go-mcp/server"
-	hotel "github.com/hollis-labs/go-otel"
-	otelprop "github.com/hollis-labs/go-otel/propagation"
+	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget"
+	gmcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	hotel "github.com/hollis-labs/libs/util/otel"
+	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	loomcompiler "github.com/hollis-labs/loom/internal/compiler"
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
@@ -19,7 +19,6 @@ import (
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type ToolRecorder interface {
@@ -421,10 +420,13 @@ func registerTool(srv *gmcp.Server, opts Options, tool gmcp.Tool) {
 
 func traceTool(name string, handler gmcp.ToolHandler, recorder ToolRecorder) gmcp.ToolHandler {
 	return func(ctx context.Context, args map[string]any) (any, error) {
-		if args != nil {
-			extracted := otelprop.ExtractMCP(args)
-			ctx = contextWithTrace(ctx, extracted)
+		meta := gmcp.MetaFromContext(ctx)
+		if meta == nil {
+			// Preserve Loom's existing argument-carried tracing for older callers;
+			// protocol metadata takes precedence for current MCP clients.
+			meta = args
 		}
+		ctx = otelprop.ExtractMCPMeta(ctx, meta)
 		ctx, span := hotel.ToolCallSpan(ctx, name)
 		defer span.End()
 		start := time.Now()
@@ -442,20 +444,6 @@ func traceTool(name string, handler gmcp.ToolHandler, recorder ToolRecorder) gmc
 		}
 		return out, nil
 	}
-}
-
-func contextWithTrace(parent, extracted context.Context) context.Context {
-	if parent == nil {
-		return extracted
-	}
-	if extracted == nil {
-		return parent
-	}
-	sc := trace.SpanContextFromContext(extracted)
-	if !sc.IsValid() {
-		return parent
-	}
-	return trace.ContextWithRemoteSpanContext(parent, sc)
 }
 
 func numericID(v any) (int64, error) {

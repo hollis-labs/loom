@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Use the published `libs/util`, `libs/ui-go`, and `libs/plugin-mcp` modules
+  for shared paths, SQLite, telemetry, directives, web UI, and MCP packages.
+- Read MCP tracing from protocol metadata, retaining the legacy argument
+  convention when metadata is absent and preserving request cancellation.
+- Require Go 1.26.8 for these modules; CI uses Go 1.26.9.
+
 - The HTTP listener now defaults to loopback (`127.0.0.1:8080`) because the API
   has no authentication and can trigger paid LLM calls. The Dockerfile passes
   its address explicitly.

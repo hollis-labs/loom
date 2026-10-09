@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	paths "github.com/hollis-labs/go-apppaths/paths"
+	paths "github.com/hollis-labs/libs/util/apppaths"
 )
 
 func TestLoadMergesUserThenProjectAndExpandsPaths(t *testing.T) {
