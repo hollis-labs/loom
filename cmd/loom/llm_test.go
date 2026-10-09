@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	paths "github.com/hollis-labs/go-apppaths/paths"
+	paths "github.com/hollis-labs/libs/util/apppaths"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
 )
