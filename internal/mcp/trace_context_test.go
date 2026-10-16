@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	gmcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	gmcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"

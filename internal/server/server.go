@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
+	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
 )
 
 const DefaultMaxBodyBytes int64 = 2 << 20
