@@ -3,7 +3,7 @@ package directivex
 import (
 	"context"
 
-	directives "github.com/hollis-labs/libs/ui-go/directives"
+	directives "github.com/hollis-labs/libs/ui/ui-go/directives"
 	"github.com/hollis-labs/loom/internal/storage"
 )
 

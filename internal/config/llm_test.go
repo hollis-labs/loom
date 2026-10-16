@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	paths "github.com/hollis-labs/libs/util/apppaths"
+	paths "github.com/hollis-labs/libs/core/util/apppaths"
 )
 
 func TestLoadMergesLLMSection(t *testing.T) {

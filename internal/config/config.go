@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	paths "github.com/hollis-labs/libs/util/apppaths"
+	paths "github.com/hollis-labs/libs/core/util/apppaths"
 	"gopkg.in/yaml.v3"
 )
 
