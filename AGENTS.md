@@ -51,7 +51,7 @@ The CLI resolves project-local `.loom/` paths by default (`resolveLayout` in
 `cmd/loom/main.go`), so which database you get depends on the working directory.
 Anything spawning `loom` from another directory must pass `-db`.
 
-The HTTP listener defaults to `127.0.0.1:8080` on purpose: the API has no
-authentication and can trigger paid LLM calls. Do not change the default to a
-wildcard address; deployments that need one pass `-addr` explicitly (the
-Dockerfile does).
+The HTTP listener defaults to `127.0.0.1:8080` on purpose: tokenless loopback
+use can trigger paid LLM calls. Do not change the default to a wildcard address;
+deployments that need one pass `-addr` explicitly (the Dockerfile does), and
+must provide `LOOM_API_TOKEN` or `-token`.
