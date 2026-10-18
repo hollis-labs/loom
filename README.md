@@ -215,7 +215,9 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 bind requires `LOOM_API_TOKEN` or `-token`. With a token, `/api/*` and `/mcp`
 require `Authorization: Bearer <token>`, including loopback requests. Exact
 GET/HEAD `/api/health` stays available for probes. CLI and stdio `loom mcp`
-keep their existing behavior.
+keep their existing behavior. Behind a reverse proxy, set a token: without one,
+a request carrying `Forwarded`, `X-Forwarded-*` or `X-Real-IP` is refused (see
+`SECURITY.md`).
 
 For Docker, supply a runtime secret; the image intentionally has no baked-in token:
 

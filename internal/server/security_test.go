@@ -128,6 +128,37 @@ func TestTokenlessIsLoopbackOnly(t *testing.T) {
 	}
 }
 
+// Host alone does not prove the caller is local: a reverse proxy on loopback can
+// rewrite it. Without a token, a request that carries forwarding headers is
+// refused; with a token the bearer is the boundary and forwarding is fine.
+func TestTokenlessRefusesForwardedRequests(t *testing.T) {
+	srv := protectedServer(t, Security{})
+	for _, header := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-Ip"} {
+		resp := call(t, http.MethodGet, srv.URL+"/api/bundles", map[string]string{header: "203.0.113.9"})
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("tokenless request with %s = %d, want 403", header, resp.StatusCode)
+		}
+	}
+	if resp := call(t, http.MethodGet, srv.URL+"/api/bundles", nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("tokenless direct loopback = %d, want 200", resp.StatusCode)
+	}
+	withToken := protectedServer(t, Security{Token: "s3cret"})
+	resp := call(t, http.MethodGet, withToken.URL+"/api/bundles", map[string]string{"X-Forwarded-For": "203.0.113.9", "Authorization": "Bearer s3cret"})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("tokened forwarded request = %d, want 200", resp.StatusCode)
+	}
+}
+
+// The bearer comparison must not depend on the supplied value's length.
+func TestBearerRejectsEveryWrongLength(t *testing.T) {
+	srv := protectedServer(t, Security{Token: "s3cret"})
+	for _, auth := range []string{"Bearer", "Bearer s3cre", "Bearer s3cret!", "Bearer " + strings.Repeat("a", 4096)} {
+		if resp := call(t, http.MethodPost, srv.URL+"/api/bundles", map[string]string{"Authorization": auth}); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Authorization %.12q = %d, want 401", auth, resp.StatusCode)
+		}
+	}
+}
+
 // Requests without an Origin (CLI, curl, server-to-server) are never
 // refused for lacking one; a present foreign Origin always is.
 func TestOriginPolicy(t *testing.T) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -64,11 +65,16 @@ func protectedPath(path string) bool {
 //     page trigger compiles. Requests without an Origin (CLI, curl,
 //     server-to-server) are unaffected.
 //   - Without a token the API is loopback-only and a request must name a
-//     loopback Host, which refuses DNS rebinding.
+//     loopback Host, which refuses DNS rebinding. A request that carries
+//     forwarding headers (Forwarded, X-Forwarded-*, X-Real-IP) is refused as
+//     well: a reverse proxy can rewrite Host, so Host alone does not prove the
+//     caller is local. A proxied deployment must set a token.
 //   - With a token every protected request needs the bearer token, except an
 //     exact GET/HEAD of /api/health. Preflights pass.
 func Protect(handler http.Handler, sec Security) http.Handler {
-	want := []byte("Bearer " + sec.Token)
+	// Compare fixed-length digests: ConstantTimeCompare returns at once when the
+	// lengths differ, which would reveal the length of the expected value.
+	want := sha256.Sum256([]byte("Bearer " + sec.Token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !protectedPath(r.URL.Path) {
 			handler.ServeHTTP(w, r)
@@ -89,6 +95,10 @@ func Protect(handler http.Handler, sec Security) http.Handler {
 			return
 		}
 		if sec.Token == "" {
+			if forwarded(r) {
+				deny(w, http.StatusForbidden, "forwarded request refused: behind a proxy, set LOOM_API_TOKEN (without one the API answers only direct loopback callers)")
+				return
+			}
 			if !IsLoopbackHost(requestHostname(r)) {
 				deny(w, http.StatusForbidden, "host not allowed: without LOOM_API_TOKEN the API answers only loopback hosts (127.0.0.1, localhost)")
 				return
@@ -100,13 +110,27 @@ func Protect(handler http.Handler, sec Security) http.Handler {
 			handler.ServeHTTP(w, r)
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+		if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="loom"`)
 			deny(w, http.StatusUnauthorized, "unauthorized: send Authorization: Bearer <LOOM_API_TOKEN>")
 			return
 		}
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// forwardingHeaders are the ones a reverse proxy adds when it passes a request
+// on. Seeing any of them means the caller may not be the loopback peer.
+var forwardingHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-Ip"}
+
+func forwarded(r *http.Request) bool {
+	for _, h := range forwardingHeaders {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func originAllowed(origin string, configured []string) bool {
