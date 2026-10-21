@@ -219,6 +219,8 @@ keep their existing behavior. Behind a reverse proxy, set a token: without one,
 a request carrying `Forwarded`, `X-Forwarded-*` or `X-Real-IP` is refused (see
 `SECURITY.md`).
 
+Tokenless loopback is a development default only; release deployments require LOOM_API_TOKEN or -token even on loopback.
+
 For Docker, supply a runtime secret; the image intentionally has no baked-in token:
 
 ```sh
