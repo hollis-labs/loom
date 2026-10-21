@@ -1,6 +1,6 @@
 module github.com/hollis-labs/loom
 
-go 1.26.8
+go 1.26.10
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
