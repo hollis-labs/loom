@@ -1,8 +1,8 @@
-import { createApiClient } from '@hollis-labs/sysop-ui/api'
+import { authenticatedClient } from './auth'
 
 // Same-origin: the Go binary serves both this SPA and the API, so an empty
 // baseUrl resolves every request against the current origin.
-const http = createApiClient({ baseUrl: '' })
+const http = authenticatedClient
 
 export interface HealthInfo {
   status: string
