@@ -34,6 +34,8 @@ checks and preflights. The static UI is public; its API client prompts on 401
 and keeps the token in tab-scoped sessionStorage. The token grants the whole
 API, including compile jobs that may call a paid LLM.
 
+Tokenless loopback is a development default only; release deployments require LOOM_API_TOKEN or -token even on loopback.
+
 - Behind a reverse proxy, set a token. Without one, Loom answers only direct
   loopback callers: a request carrying `Forwarded`, `X-Forwarded-*` or
   `X-Real-IP` is refused, because a proxy can rewrite `Host` (and `Origin`) and
