@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hollis-labs/substrate/modules/identity"
 )
 
 func writeOverride(t *testing.T, yaml string) string {
@@ -29,6 +31,17 @@ func writeOverride(t *testing.T, yaml string) string {
 // real handler chain) on a temp data directory and a free loopback port, and returns its base
 // URL. It is the acceptance test: nothing is stubbed between the HTTP client and the database.
 func started(t *testing.T) string {
+	t.Helper()
+	return startedWith(t, true)
+}
+
+// ownerPassword is the password the offline bootstrap gives the owner in these tests.
+const ownerPassword = "correct horse battery staple"
+
+// startedWith is started, optionally without the owner. The owner is created before the server
+// starts, as the offline bootstrap (loom identity setup) does it: first-run setup over HTTP is
+// refused by default, so no test creates one through a listener.
+func startedWith(t *testing.T, owner bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -49,6 +62,12 @@ func started(t *testing.T) string {
 	if err != nil {
 		cancel()
 		t.Fatal(err)
+	}
+	if owner {
+		if _, err = identity.From(run.App).SetupOwner(ctx, identity.OwnerInput{Username: "owner", DisplayName: "Owner", Password: ownerPassword}); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
 	}
 	addr := make(chan net.Addr, 1)
 	l, err := newLoom(ctx, run.App, layout)
@@ -144,6 +163,22 @@ func (s *session) want(status int, method, path string, body any) map[string]any
 	return out
 }
 
+// With no owner yet, setup is still not available over HTTP: the listener reports that setup is
+// required and that it is not offered there, and POST /api/setup is refused. Nothing opens a
+// window in which whoever reaches the port first becomes the owner.
+func TestNoSetupWindowOverHTTP(t *testing.T) {
+	s := newSession(t, startedWith(t, false))
+	got := s.want(http.StatusOK, "GET", "/api/setup", nil)
+	if got["setup_required"] != true || got["setup_over_http"] != false {
+		t.Fatalf("GET /api/setup = %v, want setup_required true, setup_over_http false", got)
+	}
+	out := s.want(http.StatusForbidden, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": ownerPassword})
+	if out["code"] != "setup_offline" {
+		t.Fatalf("POST /api/setup = %v, want code setup_offline", out)
+	}
+	s.want(http.StatusUnauthorized, "GET", "/api/status", nil)
+}
+
 // The binary serves health without credentials, refuses the API to an anonymous caller, lets the
 // first-run owner set up and sign in, and then serves reads and writes with the flat error body.
 func TestServeSetupSignInWriteReadRefuse(t *testing.T) {
@@ -155,8 +190,11 @@ func TestServeSetupSignInWriteReadRefuse(t *testing.T) {
 	if out["code"] == nil || out["message"] == nil {
 		t.Fatalf("unauthenticated error is not the flat body: %v", out)
 	}
-	s.want(http.StatusOK, "GET", "/api/setup", nil)
-	s.want(http.StatusOK, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": "correct horse battery staple"})
+	// The owner exists (created offline before the server started): setup is closed.
+	if got := s.want(http.StatusOK, "GET", "/api/setup", nil); got["setup_required"] != false {
+		t.Fatalf("GET /api/setup = %v, want setup_required false", got)
+	}
+	s.want(http.StatusOK, "POST", "/api/login", map[string]any{"username": "owner", "password": ownerPassword})
 
 	// A write: a bundle. A read: it comes back. A refused request: the same write without the
 	// X-Requested-With header a cookie-authenticated browser must send.
@@ -254,7 +292,7 @@ func TestMigrateDataThenStart(t *testing.T) {
 func TestMCPToolsNeedTheirScopes(t *testing.T) {
 	base := started(t)
 	s := newSession(t, base)
-	s.want(http.StatusOK, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": "correct horse battery staple"})
+	s.want(http.StatusOK, "POST", "/api/login", map[string]any{"username": "owner", "password": ownerPassword})
 	key := func(scopes ...string) string {
 		out := s.want(http.StatusCreated, "POST", "/api/identity/keys", map[string]any{"name": "k", "scopes": scopes})
 		k, _ := out["key"].(string)
@@ -297,7 +335,7 @@ func TestMCPToolsNeedTheirScopes(t *testing.T) {
 func TestMCPToolsIgnoreCallerID(t *testing.T) {
 	base := started(t)
 	s := newSession(t, base)
-	s.want(http.StatusOK, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": "correct horse battery staple"})
+	s.want(http.StatusOK, "POST", "/api/login", map[string]any{"username": "owner", "password": ownerPassword})
 	out := s.want(http.StatusCreated, "POST", "/api/identity/keys", map[string]any{"name": "k", "scopes": []string{"loom.mcp", "loom.read", "loom.write"}})
 	key, _ := out["key"].(string)
 	call := func(tool string, args map[string]any) string {

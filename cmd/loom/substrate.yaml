@@ -20,5 +20,6 @@ config:
   # AfterConfig hook makes the database, key and secrets paths absolute before the modules start.
   # env: true so loom.llm_api_key_ref can be env://ANTHROPIC_API_KEY, the old way to supply the key.
   secrets: { state_dir: secrets, env: true }
-  # /mcp needs the loom.mcp scope; stdio needs a token file (mcp.stdio_token_file) in enforce mode.
+  # /mcp needs the loom.mcp scope. `loom mcp` (stdio) runs under local filesystem trust (set in code, with
+  # explicit scopes); mcp.stdio_token_file makes it present a key instead.
   mcp: { version: "0.1.0", scope: loom.mcp }

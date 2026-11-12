@@ -46,7 +46,7 @@ pins:
 
 scan:
 	# Tree only: the history gate returns after the program-wide history pass.
-	python3 scripts/scan-public --tree
+	$(SUBSTRATE) scan-public --tree
 
 # Regenerate the wiring file after editing cmd/loom/substrate.yaml.
 generate:

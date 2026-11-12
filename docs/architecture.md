@@ -40,7 +40,7 @@ client -> body cap / OTel -> hostguard -> identity.Middleware -> httphost
 ### Auth model
 
 - `auth.mode: enforce`. Every `/api/` route and `/mcp` needs a verified credential and the scope it declares. Nothing in the manifest or environment weakens it; only an explicit `SUBSTRATE_CONFIG` override can.
-- The identity module is the issuer and the user store. First run: `GET /api/setup` reports `setup_required`, `POST /api/setup {display_name, username, password}` makes the owner (scope `*`), closes setup and signs in. The module also serves login, logout, password, profile, sessions, users, API keys, pairing codes, `/api/token` and `/api/identity/jwks` (Substrate `docs/identity.md`). A browser keeps the session cookie; sign-in lasts 12 hours.
+- The identity module is the issuer and the user store. First run: the owner (scope `*`) is created offline with `loom identity setup` before the service starts; `GET /api/setup` reports `{setup_required, setup_over_http}` and `POST /api/setup` is always refused (`403 setup_offline`). The module also serves login, logout, password, profile, sessions, users, API keys, pairing codes, `/api/token` and `/api/identity/jwks` (Substrate `docs/identity.md`). A browser keeps the session cookie; sign-in lasts 12 hours.
 - A cookie-authenticated write must carry an `X-Requested-With` header and a same-origin `Origin`. Requests with their own `Authorization` header (keys, tokens) are exempt.
 - Clients that are not browsers (an agent, a router, Nanite's Curator) use an API key: an administrator creates one with `POST /api/identity/keys {name, scopes}` and the client sends it as `Authorization: Bearer key_...`.
 - Single tenant. Loom has no per-user data: every caller with the scopes sees the same bundles and pages. The one per-caller thing is the MCP result cache, keyed by the verified principal subject (see §5).
@@ -72,7 +72,7 @@ The manifest (`cmd/loom/substrate.yaml`) sets the defaults. A boot hook (`AfterC
 | `secrets.env` | `true` (manifest) | Allow `env://NAME` references, so `ANTHROPIC_API_KEY` becomes `loom.llm_api_key_ref: env://ANTHROPIC_API_KEY`. |
 | `database.sqlite.path` | `<workspace dir>/loom.db` (`-db` is used literally) | Database file. |
 | `mcp.scope` | `loom.mcp` | Scope `/mcp` needs. |
-| `mcp.stdio_token_file` | none | File holding the API key `loom mcp` presents. Required in enforce mode. |
+| `mcp.stdio_token_file` | none | File holding the API key `loom mcp` presents. Without it `loom mcp` runs under local filesystem trust (`local:operator`, `loom.mcp loom.read loom.write`); with it the key is verified and a wrong one is an error. |
 | `loom.allowed_hosts` | none | Host names served besides loopback, exactly as sent. Needs a loopback TLS proxy sending `X-Forwarded-Proto: https`. |
 | `loom.export_dir` | `<data>/exports` | Where exports are written (confined: an export outside it is refused). |
 | `loom.redact_patterns` | none | Regexps redacted from ingested text and from LLM-bound content. |
@@ -197,7 +197,7 @@ This is the part of the design that's genuinely cross-repo, and where "implement
 
 Loom runs as a single binary: `loom serve` hosts the HTTP API, the embedded UI, and `/mcp`; `loom mcp` runs the stdio MCP server. In the author's setup it runs as a local daemon managed by [Cerberus](https://github.com/hollis-labs/cerberus) (see `loom.cerberus.yaml`), with its settings in the `SUBSTRATE_CONFIG` file.
 
-The CLI resolves project-local `.loom/` paths by default, so which database you get depends on the working directory. Any MCP host that spawns `loom mcp` from its own working directory should pass an explicit `-db` path pointing at the same SQLite store the HTTP daemon uses, and a `mcp.stdio_token_file` naming an API key.
+The CLI resolves project-local `.loom/` paths by default, so which database you get depends on the working directory. Any MCP host that spawns `loom mcp` from its own working directory should point at the same SQLite store the HTTP daemon uses: on a host with one service, the same `SUBSTRATE_CONFIG` and no `-db` (one signing key, one database); otherwise an explicit `-db`.
 
 The local commands (`compile`, `jobs`, `bundles`, `templates`, `pages`, `ingest`, `export`, `directives`, `status`) open the database file directly: no HTTP, no sign-in. Whoever can open the file can run them.
 

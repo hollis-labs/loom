@@ -135,11 +135,23 @@ func (l *loom) serveCmd(ctx context.Context) *cobra.Command {
 func (l *loom) mcpCmd(ctx context.Context) *cobra.Command {
 	return &cobra.Command{
 		Use:                "mcp",
-		Short:              "Serve the MCP tools over stdio (needs mcp.stdio_token_file in enforce mode)",
+		Short:              "Serve the MCP tools over stdio (local filesystem trust; mcp.stdio_token_file selects a key instead)",
 		DisableFlagParsing: true,
 		RunE: func(*cobra.Command, []string) error {
 			defer l.otel.Shutdown()
-			return mcp.ServeStdio(ctx, l.app, mcp.StdioOptions{})
+			// A stdio child started on this host by a user who can open the data file runs as the
+			// verified local operator, so it needs no key file. The scopes are listed, never the
+			// default "*": a tool outside them is refused by the per-tool check. A token file in
+			// the config still wins and is verified as always.
+			err := mcp.ServeStdio(ctx, l.app, mcp.StdioOptions{
+				LocalTrust:  true,
+				LocalScopes: []string{"loom.mcp", "loom.read", "loom.write"},
+			})
+			// SIGTERM or Ctrl-C ends the session: that is a clean stop, not a failure.
+			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+				return nil
+			}
+			return err
 		},
 	}
 }

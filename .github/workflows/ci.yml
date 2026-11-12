@@ -39,7 +39,7 @@ jobs:
           version: v2.11.4
       - name: hygiene (secrets, hosts, private paths; tree)
         # Tree only: the history gate returns after the program-wide history pass.
-        run: python3 scripts/scan-public --tree
+        run: go run github.com/hollis-labs/substrate/cmd/substrate scan-public --tree
       # The browser proof starts the real binary (./loom) on a throwaway data directory, so the
       # binary is built after the frontend (it embeds the built UI) and before the suite.
       - name: Build the binary the browser suite starts

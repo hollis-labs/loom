@@ -40,6 +40,10 @@ The ported API serves all five (every route above is in the backend's table): no
 - The old UI hard-coded the `nanite` bundle for pages, compile and export. The three views now have a bundle picker
   over `GET /api/bundles`; the bundle named `nanite` is selected on first load when it exists (the old behaviour),
   otherwise the first. The Exports button reads "Export bundle" instead of "Export Nanite".
+- First-run setup is closed over HTTP (Substrate d453ac8: `GET /api/setup` answers `{setup_required, setup_over_http}`,
+  `POST /api/setup` is always `403 setup_offline`; Loom never sets `setup_over_http`). With no owner the UI shows a
+  plain screen with no form: create the owner on the host with `loom identity setup --username NAME`, then sign in.
+  The setup form is gone.
 - Sign-in is the identity module's cookie session. On load the UI asks `GET /api/identity/profile`: a 401 means signed
   out. A 429 on sign-in shows the server's message plus the `Retry-After` wait, in minutes.
 - Client URLs are real paths (`/pages`, `/jobs`, ...); the Go host's SPA fallback serves them.
@@ -81,10 +85,14 @@ The ported API serves all five (every route above is in the backend's table): no
 
 `npm run test:e2e` (Playwright, `tests/`) runs against the real backend binary on a throwaway data directory: the
 config starts `../loom` (build with `npm run build` then `make build`) with HOME and the XDG directories inside the
-temp directory, `rm -rf`s it first and never reuses a running server; global setup does first-run setup and stores the
+temp directory, `rm -rf`s it first and never reuses a running server; global setup signs in and stores the
 owner session. The suite covers sign-in/out, a wrong password, no data call while signed out, the five views with
 empty states and each write, a real 403 error state (a read-only user compiling), the non-admin `scope_required` on
 the key routes, deep links and 390 px width.
+
+The owner is created on the host the way production does it: the server command runs `loom --no-project -db <db> identity setup`
+(password on stdin from a file in the temp directory) before the server starts. A second backend (port + 1,
+`LOOM_E2E_FRESH_PORT`) never gets an owner and backs the no-owner screen tests.
 
 Environment: `LOOM_E2E_PORT` (default 8080, the manifest default), `LOOM_E2E_BIN` (default `../loom`),
 `LOOM_E2E_DIR` (default `$TMPDIR/loom-e2e-<port>`), `PLAYWRIGHT_CHANNEL` (default `chrome`, the system Chrome; no

@@ -3,7 +3,7 @@ import { Button } from "@hollis-labs/design-components"
 import { Braces, Briefcase, FileDown, Files, LogOut, ScrollText } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ApiError, request, UNAUTHORIZED_EVENT } from "./api/request"
-import { Entry } from "./identity/entry"
+import { Entry, SetupOffline } from "./identity/entry"
 import { Notice } from "./identity/forms"
 import { type Session, SessionContext } from "./identity/session"
 import { SignOutPage } from "./identity/signout"
@@ -56,7 +56,6 @@ export function App() {
   const [path, navigate] = usePath()
   const signedOut = useCallback(() => {
     setName(null)
-    setSetup(false)
     navigate("/")
   }, [navigate])
   useEffect(() => {
@@ -104,7 +103,7 @@ export function App() {
         <Button onClick={() => window.location.reload()}>Try again</Button>
       </main>
     )
-  if (!session) return <Entry setup={setup} onReady={setName} />
+  if (!session) return setup ? <SetupOffline /> : <Entry onReady={setName} />
   return (
     <SessionContext.Provider value={session}>
       <ManifestShell
