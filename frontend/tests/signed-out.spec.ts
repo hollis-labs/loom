@@ -62,3 +62,38 @@ test("too many wrong passwords: the 429 message says when to try again", async (
   }
   await expect(page.getByRole("alert")).toContainText(/try again in \d+ minute/i)
 })
+
+test("a failed sign-in moves focus to the error, and a retry works from the keyboard", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page.getByLabel("Username").fill(ownerName)
+  await page.getByLabel("Password").fill("wrong wrong wrong")
+  await page.getByLabel("Password").press("Enter")
+  await expect(page.getByRole("alert")).toBeFocused()
+  // Shift+Tab goes back to the form fields, not to the top of the page.
+  await page.keyboard.press("Shift+Tab")
+  await expect(page.getByLabel("Password")).toBeFocused()
+  await page.getByLabel("Password").fill(ownerPassword())
+  await page.getByLabel("Password").press("Enter")
+  await expect(page.getByRole("link", { name: "Compile jobs" })).toBeVisible()
+})
+
+test("a signed-out deep link is kept through sign-in; an explicit sign-out goes home", async ({
+  page,
+}) => {
+  await page.goto("/pages")
+  await expect(page.getByRole("heading", { name: "Sign in to Loom" })).toBeVisible()
+  await page.getByLabel("Username").fill(ownerName)
+  await page.getByLabel("Password").fill(ownerPassword())
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page.getByLabel("Search pages")).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe("/pages")
+  await page.getByRole("link", { name: "Sign out" }).click()
+  await page.getByRole("button", { name: "Sign out" }).click()
+  await page.getByLabel("Username").fill(ownerName)
+  await page.getByLabel("Password").fill(ownerPassword())
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page.getByRole("link", { name: "Compile jobs" })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe("/")
+})
