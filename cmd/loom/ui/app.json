@@ -1,0 +1,102 @@
+{
+  "schema_version": 0,
+  "module": "loom",
+  "contributions": [
+    {
+      "kind": "nav.item",
+      "key": "bundles",
+      "label": "Bundles",
+      "icon": "briefcase",
+      "route": "/",
+      "priority": 1
+    },
+    {
+      "kind": "surface",
+      "key": "bundles",
+      "label": "Bundles",
+      "title": "Bundles",
+      "route": "/",
+      "layout": "list"
+    },
+    {
+      "kind": "nav.item",
+      "key": "pages",
+      "label": "Pages",
+      "icon": "files",
+      "route": "/pages",
+      "priority": 2
+    },
+    {
+      "kind": "surface",
+      "key": "pages",
+      "label": "Pages",
+      "title": "Pages",
+      "route": "/pages",
+      "layout": "list"
+    },
+    {
+      "kind": "nav.item",
+      "key": "jobs",
+      "label": "Compile jobs",
+      "icon": "scroll-text",
+      "route": "/jobs",
+      "priority": 3
+    },
+    {
+      "kind": "surface",
+      "key": "jobs",
+      "label": "Compile jobs",
+      "title": "Compile jobs",
+      "route": "/jobs",
+      "layout": "list"
+    },
+    {
+      "kind": "nav.item",
+      "key": "exports",
+      "label": "Exports",
+      "icon": "file-down",
+      "route": "/exports",
+      "priority": 4
+    },
+    {
+      "kind": "surface",
+      "key": "exports",
+      "label": "Exports",
+      "title": "Exports",
+      "route": "/exports",
+      "layout": "form"
+    },
+    {
+      "kind": "nav.item",
+      "key": "directives",
+      "label": "Directives",
+      "icon": "braces",
+      "route": "/directives",
+      "priority": 5
+    },
+    {
+      "kind": "surface",
+      "key": "directives",
+      "label": "Directives",
+      "title": "Directives",
+      "route": "/directives",
+      "layout": "form"
+    },
+    {
+      "kind": "nav.item",
+      "key": "sign-out",
+      "label": "Sign out",
+      "icon": "log-out",
+      "route": "/sign-out",
+      "region": "nav.footer"
+    },
+    {
+      "kind": "surface",
+      "key": "sign-out",
+      "label": "Sign out",
+      "title": "Sign out",
+      "route": "/sign-out",
+      "layout": "form"
+    }
+  ]
+}

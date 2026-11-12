@@ -1,6 +1,7 @@
 # Loom on Substrate. The manifest is the shell: modules and config.
 app: loom
 variant: app-host
+frontend: { contributions: ui/app.json }
 profiles: [minimal]
 modules:
   add: [secrets, auth, database, identity, mcp, cli]
