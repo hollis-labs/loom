@@ -268,7 +268,11 @@ workspace maps to one run, as before. The only new rule is the file name.
   `wiki_result_cache` and `schema_version`; any trigger, view or virtual table; any table using AUTOINCREMENT), naming it.
   Inside the copy transaction, per table, it checks `SELECT … FROM old.t EXCEPT SELECT … FROM main.t` and the
   reverse are both empty (content, not only counts; NULL and empty string differ). After it: per-table row counts,
-  `integrity_check`, `foreign_key_check`, the WAL is folded. A failure leaves nothing at the target; a second run refuses
+  `integrity_check`, `foreign_key_check`, the WAL is folded.
+  The old file is opened without locks when it has no WAL content, so the run records the size, modification time and
+  sha256 of the old file and its `-wal`/`-journal` before the copy and again after the checks; any difference fails with
+  "the old database changed during the migration; stop whatever is writing to it and run again" and leaves nothing at
+  the target (a large file would compare size and mtime only). A failure leaves nothing at the target; a second run refuses
   because the target exists. The old file is not written, so rollback is: stop, point the previous build at the
   old data directory (`loom.db` can stay or go).
 - Copied: `wiki_bundles`, `wiki_pages`, `wiki_links`, `wiki_verifications`, `compile_jobs`, `compile_events`,
