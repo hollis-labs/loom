@@ -143,10 +143,15 @@ func (l *loom) mcpCmd(ctx context.Context) *cobra.Command {
 			// verified local operator, so it needs no key file. The scopes are listed, never the
 			// default "*": a tool outside them is refused by the per-tool check. A token file in
 			// the config still wins and is verified as always.
-			return mcp.ServeStdio(ctx, l.app, mcp.StdioOptions{
+			err := mcp.ServeStdio(ctx, l.app, mcp.StdioOptions{
 				LocalTrust:  true,
 				LocalScopes: []string{"loom.mcp", "loom.read", "loom.write"},
 			})
+			// SIGTERM or Ctrl-C ends the session: that is a clean stop, not a failure.
+			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+				return nil
+			}
+			return err
 		},
 	}
 }

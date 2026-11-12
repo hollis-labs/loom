@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -542,6 +543,48 @@ func TestConcurrentFirstStartLeavesAUsableFile(t *testing.T) { raceRounds(t, 5, 
 // both processes rewrite the key's JWKS file (write a temp file, rename it), so the order is the
 // rule here too: the service first, the child once the service answers.
 func TestSimultaneousStartOnAMigratedFileLeavesAUsableFile(t *testing.T) { raceRounds(t, 3, true) }
+
+// SIGTERM ends the stdio child cleanly (exit 0, nothing on stderr), as it does the service: a
+// gateway that stops its child must not see a failure.
+func TestChildStopsCleanlyOnSIGTERM(t *testing.T) {
+	h := newHost(t)
+	h.noDB = true
+	h.owner()
+	var stderr syncBuf
+	cmd := h.command("mcp", "--no-project")
+	cmd.Stderr = &stderr
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = in.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(stderr.String(), "local filesystem trust") { // started and serving
+		if time.Now().After(deadline) {
+			t.Fatalf("the child never started: %s", stderr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("the child exited with %v after SIGTERM; stderr: %s", err, stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the child did not stop on SIGTERM")
+	}
+	if strings.Contains(stderr.String(), "Error:") || strings.Contains(stderr.String(), "canceled") {
+		t.Fatalf("SIGTERM left an error on stderr: %s", stderr.String())
+	}
+}
 
 // (c), the order that is the rule: the child starts, and restarts, while the service is running.
 // This is what the gateway does when the child exits and is started again.
