@@ -14,7 +14,10 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    agent use is `loom mcp` spawned by an MCP host against a project-local `.loom/` database, often with no server
    running. Today (option a, kept working exactly as the framework requires; the mcp module's token check is not
    weakened or bypassed): run `loom serve` once on that database, `POST /api/setup`, create a key with
-   `POST /api/identity/keys`, save it to a file, point `mcp.stdio_token_file` at it.
+   `POST /api/identity/keys`, save it to a file, point `mcp.stdio_token_file` at it. That is for a throwaway or
+   development database. For a database that holds real data nothing opens a setup window, even on loopback
+   (another application's loopback first-run setup was taken over by an agent on the same host); the owner and keys
+   come from the offline bootstrap, before any process starts (`docs/cutover-plan.md`).
    Owner decision: a stdio MCP process started locally against a local file runs under filesystem trust, the same as
    Loom's local CLI commands; enforced identity stays on the HTTP surfaces. The identity module also gets an offline
    bootstrap command (create the owner and a key from the command line, no server) for served instances. Both are
@@ -60,6 +63,21 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    runtime, as the pre-port `main.go` did (twice). Carried over unchanged; not a setting yet.
 8. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
+9. **Framework limits found by running two processes on one database (PR #15).** Both are Substrate's, not Loom's
+   (the only Loom-side cause, a start-up guard without a busy timeout, is fixed).
+   - **Two processes that start at the same moment on a new file can lose at open or at the migration.** With the real
+     binary, `loom serve` and `loom mcp -db <same new file>` started together: 3 of 5 rounds one of them failed
+     (`database is locked` at open, or `table wiki_bundles already exists` from the migration). The file was never
+     damaged and a lone start afterwards worked. On an already migrated file concurrent starts are clean. **The rule:**
+     the schema is created first (`loom migrate-data`, or one earlier start), the service starts first and the child
+     second. Passed to the Framework Agent.
+   - **A second process can quietly become a second issuer.** Identity creates its signing key wherever the config
+     points if none exists there. A child launched with `-db` points beside the database, not at the service's data
+     directory, so it writes its own key next to a database that already holds users. Wanted: refuse to create a
+     signing key while the database already holds identity rows (a start-time check in the identity module). It
+     needs the identity module's table and key-file knowledge, so it is **not built in Loom** (no identity logic here);
+     until it exists the child is launched with the service's `SUBSTRATE_CONFIG` and no `-db`
+     (`docs/cutover-plan.md`, section 2), which PR #15 tests.
 
 ## Decisions made in the port
 
@@ -336,7 +354,8 @@ Outline, to be approved by the owner before any cutover:
 4. **Deploy:** build in CI, install from GitHub (`fleet-install deploy loom --commit <sha>`, `--dry-run` first),
    keep the previous release, check `/healthz`.
 5. **Rollback:** relink the previous release, restart it on the unchanged old data directory.
-6. **Verify live:** first-run setup (owner), one write, one read through the real URL, an unknown `Host` refused,
+6. **Verify live:** the owner and keys already exist from the offline bootstrap and `GET /api/setup` says setup is
+   closed (no setup window is ever opened), one write, one read through the real URL, an unknown `Host` refused,
    every MCP host listing tools.
 
 ## For the operator
@@ -402,7 +421,8 @@ Two machines, two kinds of client.
 
 - **The server host:** the user unit `loom serve --no-project --addr 127.0.0.1:8092` (no token in the unit; an
   environment file exists and was not opened). The caller of that port is not known. At cutover it needs the new
-  binary, `loom migrate-data --all` on the stopped service, a first-run setup (owner) and API keys for each caller.
+  binary, `loom migrate-data --all` on the stopped service, the offline identity bootstrap (owner and an API key for each caller, before the service starts; no HTTP
+  first-run setup).
   The one stdio client that matters is the Tether gateway, which runs `loom mcp --no-project -db <workspace>/main.db`
   as a child to serve the loom tools to agents: under enforced auth its launch config needs `mcp.stdio_token_file`
   naming a file with an API key holding `loom.mcp` plus `loom.read` and/or `loom.write`, and the `-db` flag moves to

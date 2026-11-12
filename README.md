@@ -238,3 +238,7 @@ docker run --rm -p 8080:8080 -v loom-data:/data \
 The first visit to a new instance does the identity first-run step: open the
 UI (or `POST /api/setup`) to create the owner account, then create API keys
 for programs (`POST /api/identity/keys`). Nothing is served before that.
+
+On a host where other agents or users run, do not leave setup over HTTP open: whoever reaches the port first becomes
+the owner, and loopback does not stop another process on the same host. The offline identity bootstrap command (not
+available yet) replaces it: it creates the owner and keys before the service starts.
