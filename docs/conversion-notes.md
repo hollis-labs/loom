@@ -123,7 +123,7 @@ Things Substrate did not provide, or choices that need the owner. Each says what
 
 | Old | New |
 |---|---|
-| tools take an optional `caller_id` | the argument is gone; the cache owner is the verified principal |
+| tools take an optional `caller_id` | the argument is gone from the schemas; a client that still sends it is **accepted and ignored** (tested: `TestMCPToolsIgnoreCallerID`); the cache owner is the verified principal |
 | `/mcp` needs the shared token | `/mcp` needs a verified credential holding `loom.mcp`; each tool also needs `loom.read` (read tools) or `loom.write` |
 | `loom mcp` trusts its launcher | `loom mcp` needs `mcp.stdio_token_file` naming a key that holds `loom.mcp`, until local stdio trust lands (gap 1) |
 | tool names, schemas (apart from `caller_id`), annotations | unchanged |
@@ -380,6 +380,17 @@ A manual run with an explicit `-db` and `--no-project` placed the identity signi
 XDG default data directory instead of beside the database. Fixed: with `-db` they are placed beside that file.
 Every test in `cmd/loom` runs with HOME and the XDG directories in a temp directory (`TestMain`), and a test fails if
 the default layout resolves to the real home.
+
+## What a client sees without a verified principal
+
+The MCP result cache is owned by the verified principal (an API key's or a user's id), never by a tool argument, and
+a call with no verified principal is owned by nobody. For such a call, a large list result is returned truncated by
+the usual budget with no `wiki_result://` pointer in the hint (nothing is stored), and `loom_fetch_result` /
+`loom_search_result` answer "not found" for any id. Everything else works the same. Today every client, stdio
+included, presents a key and so has a principal: this is what the Tether gateway's child and the laptop's sessions
+will see **once local stdio trust lands in the framework** (Gap 1), because a trusted local process is not a
+verified principal. Until a decision gives such a process an identity, deep-dive-by-id does not work for it, and a
+client that relied on it must page its searches with `limit` instead.
 
 ## Cutover: machines and clients
 

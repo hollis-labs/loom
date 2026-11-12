@@ -291,3 +291,39 @@ func TestMCPToolsNeedTheirScopes(t *testing.T) {
 		t.Fatalf("write tool with a write key failed: %s", out)
 	}
 }
+
+// Clients written for the old Loom still send caller_id. It is no longer a declared argument and
+// must be accepted and ignored: not rejected as unknown, and never used as the cache owner.
+func TestMCPToolsIgnoreCallerID(t *testing.T) {
+	base := started(t)
+	s := newSession(t, base)
+	s.want(http.StatusOK, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": "correct horse battery staple"})
+	out := s.want(http.StatusCreated, "POST", "/api/identity/keys", map[string]any{"name": "k", "scopes": []string{"loom.mcp", "loom.read", "loom.write"}})
+	key, _ := out["key"].(string)
+	call := func(tool string, args map[string]any) string {
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}})
+		req, _ := http.NewRequest(http.MethodPost, base+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		raw, _ := io.ReadAll(res.Body)
+		return string(raw)
+	}
+	search := call("loom_page_search", map[string]any{"bundle": "nanite", "q": "x", "caller_id": "someone-else"})
+	if strings.Contains(search, `"isError":true`) || strings.Contains(strings.ToLower(search), "unexpected") || strings.Contains(strings.ToLower(search), "additional") {
+		t.Fatalf("loom_page_search with caller_id was rejected: %s", search)
+	}
+	fetch := call("loom_fetch_result", map[string]any{"id": "no-such-result", "caller_id": "someone-else"})
+	t.Logf("loom_fetch_result with caller_id: %s", fetch)
+	if strings.Contains(strings.ToLower(fetch), "unexpected") || strings.Contains(strings.ToLower(fetch), "additional") || strings.Contains(strings.ToLower(fetch), "caller_id") {
+		t.Fatalf("loom_fetch_result complained about caller_id: %s", fetch)
+	}
+	if !strings.Contains(fetch, `"isError":true`) {
+		t.Fatalf("fetching a result that does not exist should be an error: %s", fetch)
+	}
+}
