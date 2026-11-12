@@ -41,6 +41,7 @@ type loom struct {
 	settings settings.Settings
 	otel     loomotel.Runtime
 	ready    func(net.Addr)
+	layout   paths.Layout // the resolved data layout, for `loom path`
 }
 
 // newLoom builds the repository and compiler over the database module's store, reads the
@@ -83,6 +84,13 @@ func newLoom(ctx context.Context, app *module.App, layout paths.Layout) (*loom, 
 	opts.Authorize = func(ctx context.Context, tool string) error { return mcp.Authorize(ctx, app, tool) }
 	loommcp.RegisterTools(srv, repo, comp, opts)
 	return &loom{app: app, repo: repo, comp: comp, settings: cfg, otel: otelRuntime}, nil
+}
+
+// readerLoom is the shell for `loom status`: the repository over the existing database, and
+// nothing else (no tools, no LLM provider, no telemetry).
+func readerLoom(app *module.App) *loom {
+	st := database.From(app)
+	return &loom{app: app, repo: storage.NewRepositoryRW(st.DB(), st.Reader())}
 }
 
 // mcpOptions guards against a classic Go nil-interface trap: Runtime.Recorder is a concrete
@@ -215,7 +223,7 @@ func (l *loom) commands(ctx context.Context) map[string]func(args []string) erro
 			}
 			return l.directivesLedgerCLI(ctx, a)
 		},
-		"path":   pathCLI,
+		"path":   func(a []string) error { return l.pathCLI(a) },
 		"status": func([]string) error { return l.statusCLI(ctx) },
 	}
 }

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -34,25 +35,45 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	layout, err := resolveLayout(appArgs)
+	modules, kind := plan(rest)
+	// Only the commands that write create the data directories; the rest resolve the layout
+	// without creating anything.
+	migrate := len(rest) > 0 && rest[0] == "migrate-data"
+	layout, err := layoutFor(appArgs, (kind == kindFull || kind == kindIdentity) && !migrate)
 	if err != nil {
 		return err
 	}
-	if len(rest) > 0 && rest[0] == "migrate-data" {
+	if migrate {
 		// Runs before the modules start: it builds the new database itself, and an old
 		// database would make them refuse to start.
 		return migrateData(ctx, layout, explicitDB(appArgs), rest[1:], os.Stdout)
 	}
-	started, err := startModules(ctx, layout, explicitDB(appArgs))
+	started, err := startModulesFor(ctx, layout, explicitDB(appArgs), modules, kind == kindStatus)
+	var none *noDatabaseError
+	if errors.As(err, &none) {
+		// status, before any database exists: say so; nothing was created.
+		return noDatabaseStatus(none.path, os.Stdout)
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { _ = started.Stop(context.Background()) }()
 
-	l, err := newLoom(ctx, started.App, layout)
-	if err != nil {
-		return err
+	var l *loom
+	switch kind {
+	case kindFull:
+		l, err = newLoom(ctx, started.App, layout)
+		if err != nil {
+			return err
+		}
+	case kindStatus:
+		l = readerLoom(started.App)
+	default:
+		// The commands are registered so that help lists them; none of them can run in this mode
+		// (plan sent them to the full set), so the shell needs nothing behind it.
+		l = &loom{app: started.App}
 	}
+	l.layout = layout
 	rootCmd := cli.Root(started.App)
 	serve := l.serveCmd(ctx)
 	// `loom` with no command serves, like `loom serve`.
