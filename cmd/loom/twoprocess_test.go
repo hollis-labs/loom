@@ -76,6 +76,7 @@ type host struct {
 	home string
 	addr string
 	cfg  string
+	noDB bool // the child is launched without -db, from the same config as the service
 }
 
 func newHost(t *testing.T) *host {
@@ -161,7 +162,10 @@ func (h *host) child(token, tool string, args map[string]any, extraArgs ...strin
 	}
 	h.writeConfig("mcp:\n  stdio_token_file: " + tokenFile + "\n")
 	argv := append([]string{"mcp", "--no-project"}, extraArgs...)
-	cmd := h.command(append(argv, "-db", h.db())...)
+	if !h.noDB {
+		argv = append(argv, "-db", h.db())
+	}
+	cmd := h.command(argv...)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		h.t.Fatal(err)
@@ -214,6 +218,42 @@ func (h *host) child(token, tool string, args map[string]any, extraArgs ...strin
 		case <-timeout:
 			return "", time.Since(start), fmt.Errorf("child never answered: %s", strings.TrimSpace(stderr.String()))
 		}
+	}
+}
+
+// The fix for the split: launch the child like the service, with the same SUBSTRATE_CONFIG and
+// no -db. It then resolves the same data directory, so the same signing key and the same
+// database, and writes no second key.
+func TestChildWithoutDBSharesTheServiceKeyAndFile(t *testing.T) {
+	h := newHost(t)
+	h.service()
+	_, key := h.owner()
+	serviceKey := filepath.Join(h.dataDir(), "identity-signing.key")
+	before, err := os.ReadFile(serviceKey) //nolint:gosec // a path inside this test's temp home
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.noDB = true
+	line, _, err := h.child(key, "loom_template_put", map[string]any{"name": "from-child", "generator": "wiki_page", "body": "x"})
+	if err != nil || isToolError(line) {
+		t.Fatalf("child without -db: %v %s", err, line)
+	}
+	if _, statErr := os.Stat(filepath.Join(h.workspaceDir(), "identity-signing.key")); statErr == nil {
+		t.Fatal("the child wrote a second signing key beside the database")
+	}
+	after, _ := os.ReadFile(serviceKey) //nolint:gosec // a path inside this test's temp home
+	if !bytes.Equal(before, after) {
+		t.Fatal("the service's signing key changed")
+	}
+	get, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+h.addr+"/api/templates/from-child", nil)
+	get.Header.Set("Authorization", "Bearer "+key)
+	res, err := http.DefaultClient.Do(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the service does not see the write of a child launched without -db: %d", res.StatusCode)
 	}
 }
 
