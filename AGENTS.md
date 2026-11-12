@@ -33,7 +33,7 @@ go vet ./...
 go run github.com/hollis-labs/substrate/cmd/substrate pins check --app .
 go test -race ./...
 golangci-lint run          # v2.11.4
-python3 scripts/scan-public --tree
+go run github.com/hollis-labs/substrate/cmd/substrate scan-public --tree
 ```
 
 After the frontend steps in `frontend/` (`npm ci`, `npm run typecheck`, `npm run lint`,
