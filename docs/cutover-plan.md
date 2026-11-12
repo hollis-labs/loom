@@ -62,7 +62,7 @@ under 20 ms on the copy; the rest is stop, swap, start and the first-run steps).
    Until it exists the only way is first-run setup over HTTP, `POST /api/setup`, from the host itself while the
    listener is loopback-only; do not widen the listener before that is done.
 7. Verify: sign in, one write (compile a page), one read, an unknown `Host` refused (403), `/mcp` with a key
-   listing 32 tools.
+   listing the 30 tools.
 
 **Rollback:** stop the new service, put the old binary and the old descriptor back, start. The old `main.db` was
 never written; `loom.db` can stay or go.
@@ -76,7 +76,7 @@ Today: `loom mcp --no-project -db …/main.db`. After: the same command against 
    create a key (scopes `loom.mcp loom.read loom.write`), write it to a file readable only by the gateway's user, add
    `mcp.stdio_token_file` to the `SUBSTRATE_CONFIG` file the child is launched with.
 2. Change the launch config (Tether side, routed through the driver), restart the child.
-3. Verify: the gateway lists the 32 tool names unchanged, one `loom_status` call, one write and one read as an agent.
+3. Verify: the gateway lists the 30 tool names unchanged, one `loom_status` call, one write and one read as an agent.
 4. Note: with no verified principal (local trust, once it exists) lists are returned truncated with no deep-dive
    pointer; see "What a client sees without a verified principal" in `docs/conversion-notes.md`.
 
