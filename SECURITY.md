@@ -67,9 +67,10 @@ The deterministic compile path makes no network calls. With
 body to Anthropic. A baseline set of secret-shaped patterns (API keys, AWS
 keys, bearer tokens, GitHub tokens, JWTs, PEM blocks) plus any configured
 `redact_patterns` are redacted before sending; this is best effort, not a
-guarantee. Keep `ANTHROPIC_API_KEY` in the process environment, never in
-committed config. Optional OpenTelemetry export is off unless
-`LOOM_OTEL_ENABLED` is set.
+guarantee. Set the key as a secret reference, `loom.llm_api_key_ref`
+(`keychain://`, `file://`, `op://`, or `env://ANTHROPIC_API_KEY`), never the key
+itself in committed config. Optional OpenTelemetry export is off unless
+`loom.otel_enabled` is set.
 
 ## Current security limitations
 

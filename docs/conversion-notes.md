@@ -54,7 +54,9 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    Rule (owner, every repo): the TREE is clean in the port PR (`scan-public --tree`, which CI and `make scan` now
    run); HISTORY is not rewritten during the port and gets one planned rewrite pass after the migration, when the
    `--ref HEAD` gate returns. The table above is kept for that pass. No allow file is needed for Loom.
-6. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
+6. **Pre-existing dead code, left alone.** `compiler.CompileWikiPage` is unreachable (it was already on main before
+   the port). Not touched.
+7. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
 
 ## Decisions made in the port
@@ -121,7 +123,7 @@ Things Substrate did not provide, or choices that need the owner. Each says what
 |---|---|
 | tools take an optional `caller_id` | the argument is gone; the cache owner is the verified principal |
 | `/mcp` needs the shared token | `/mcp` needs a verified credential holding `loom.mcp`; each tool also needs `loom.read` (read tools) or `loom.write` |
-| `loom mcp` trusts its launcher | `loom mcp` needs `mcp.stdio_token_file` naming a key that holds `loom.mcp` (gap 1) |
+| `loom mcp` trusts its launcher | `loom mcp` needs `mcp.stdio_token_file` naming a key that holds `loom.mcp`, until local stdio trust lands (gap 1) |
 | tool names, schemas (apart from `caller_id`), annotations | unchanged |
 
 ## For clients
@@ -214,7 +216,8 @@ Outline, to be approved by the owner before any cutover:
    files stay.
 2. **Clients:** per client, new credential (API key with `loom.read loom.write loom.mcp`), config change, owner:
    MCP hosts add `mcp.stdio_token_file`; HTTP callers send `Authorization: Bearer key_...`; stop sending
-   `caller_id`. Run each against the new build before declaring done. Gap 1 (stdio bootstrap) must be decided first.
+   `caller_id`. Run each against the new build before declaring done. Gap 1 (stdio bootstrap) is decided and waits on the framework
+   change; until local trust lands a stdio host needs the token file.
 3. **Config and supervision:** the service descriptor drops `--addr`, `LOOM_OTEL_ENABLED`, `ANTHROPIC_API_KEY`
    and gets `SUBSTRATE_CONFIG` (httphost.addr `127.0.0.1:8092`, `loom.otel_enabled`, `loom.llm_api_key_ref`), and the
    old `config.yaml` values move into the `loom:` block. Hand to the Cerberus owner.

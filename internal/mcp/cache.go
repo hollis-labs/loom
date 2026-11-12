@@ -36,7 +36,7 @@ const DefaultCacheTTLSeconds = 3600 // 1 hour
 // It is the per-caller deep-dive-by-id mechanism for CW-20260816-0014: a
 // caller who received a truncated/summarized loom_page_search (etc.) result
 // can retrieve the full untruncated result later via loom_fetch_result /
-// loom_search_result, scoped to the caller_id that produced it.
+// loom_search_result, scoped to the owner that produced it (the verified principal; the column is still named caller_id).
 type ResultCache struct {
 	db              *sql.DB
 	softTruncBytes  int
@@ -283,7 +283,7 @@ func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items
 			id, expiresAt, cerr := cache.Store(callerID, uuid.NewString(), toolName, string(full))
 			if cerr == nil {
 				pointer := fmt.Sprintf(
-					"Full result (%d items, %d bytes) cached as wiki_result://%s for caller_id=%q, expires_at=%s. Use loom_fetch_result or loom_search_result to retrieve it.",
+					"Full result (%d items, %d bytes) cached as wiki_result://%s for owner=%q, expires_at=%s. Use loom_fetch_result or loom_search_result to retrieve it.",
 					len(items), len(full), id, callerID, expiresAt.Format(time.RFC3339),
 				)
 				if env.Hint == "" {

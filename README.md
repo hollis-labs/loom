@@ -9,11 +9,12 @@ compile, *when*, or with what title and provenance — that's the caller's job
 (Fragments Engine's router, Nanite's Curator agent, or a person at the CLI).
 It is not a capture inbox, an agent runtime, or a recall store.
 
-> **Pre-release.** Loom is unreleased, not deployed, and has no outside
-> consumers. It's being built in the open: the code, the docs, and this
-> README describe what exists today, not a pitch for what's planned.
-> Interfaces and behavior change without notice, and there are no
-> compatibility guarantees yet.
+> **In use.** Loom is deployed and running, and its data is real, so a change
+> here is a migration, not a restart. The move onto Substrate is a breaking
+> change for clients and operators: see the cutover section of
+> [docs/conversion-notes.md](docs/conversion-notes.md) before upgrading.
+> The code, the docs, and this README describe what exists today, not a pitch
+> for what's planned.
 
 ## What it is today
 
@@ -233,3 +234,7 @@ on a volume:
 docker run --rm -p 8080:8080 -v loom-data:/data \
   -v ./loom.local.yaml:/etc/loom.yaml -e SUBSTRATE_CONFIG=/etc/loom.yaml loom
 ```
+
+The first visit to a new instance does the identity first-run step: open the
+UI (or `POST /api/setup`) to create the owner account, then create API keys
+for programs (`POST /api/identity/keys`). Nothing is served before that.
