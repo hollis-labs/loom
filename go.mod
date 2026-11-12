@@ -10,7 +10,7 @@ require (
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0
 	github.com/hollis-labs/libs/security/auth v0.3.0
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0
-	github.com/hollis-labs/substrate v0.1.1-0.20261112141608-bac8c60147a8
+	github.com/hollis-labs/substrate v0.1.1-0.20261112162132-d453ac897397
 	github.com/spf13/cobra v1.10.2
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.45.0
@@ -79,6 +79,7 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
