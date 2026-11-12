@@ -56,7 +56,9 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    `--ref HEAD` gate returns. The table above is kept for that pass. No allow file is needed for Loom.
 6. **Pre-existing dead code, left alone.** `compiler.CompileWikiPage` is unreachable (it was already on main before
    the port). Not touched.
-7. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
+7. **OTel environment is hard-coded to `development`.** `newLoom` passes `Environment: "development"` to the OTel
+   runtime, as the pre-port `main.go` did (twice). Carried over unchanged; not a setting yet.
+8. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
 
 ## Decisions made in the port
