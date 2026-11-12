@@ -148,9 +148,19 @@ unless marked otherwise.
 `vite.config.ts` proxies `/api` to 8080, so change the proxy target if the port moves. `make ui-dev` runs Vite. With
 `-db <file>` or `--no-project` the data (database, identity key, secrets) sits beside that file; without them it is
 project-local `.loom/` or the XDG data directory. Use a temp directory and an explicit `-db` for development, never a
-real data directory. Dev browser origin through the Vite proxy: writes are checked against the page's own `Origin`
-and `Host`; the proxy forwards `Host` as the Vite host, which is loopback and passes the Host check (not yet tried in
-a real browser). If a proxy changes the origin, list it in `identity.allowed_origins`.
+real data directory. 
+**Development with the Vite dev server (observed in a real browser).** A cookie-authenticated write is checked
+against the Go server's own origin, but the browser sends the Vite server's origin, so every write through the dev
+proxy answers `403 bad_origin`. Fix it in the *development* `SUBSTRATE_CONFIG` file only:
+
+```yaml
+identity:
+  allowed_origins: ["http://localhost:5173"]   # the Vite dev origin, scheme and port exact
+```
+
+`allowed_origins` is an exact-match allow list of extra origins whose cookie writes are accepted. It stays out of any
+deployed config: listing a dev origin there lets a page served from that origin write with a signed-in user's
+cookie. (`loom.example.yaml` shows it commented out.)
 
 **Sign-in flow (identity module, canonical paths, no `/api/identity/login`).**
 - `GET /api/setup` (public) -> `{"setup_required": bool}`.
@@ -165,7 +175,7 @@ a real browser). If a proxy changes the origin, list it in `identity.allowed_ori
   for an API key; `400 invalid_request` with the reason in `message`. Minimum password length is the server's
   (`identity.min_password`): show the server's message.
 - Profile = `{id, username, display_name, email, scopes}`. There is no read route for the signed-in caller yet
-  (`GET /api/identity/profile` answers 401/403 `route_not_mapped`; a framework addition is planned). After a reload the
+  (`GET /api/identity/profile` answers 403 `route_not_mapped` for everyone on this branch, observed in a browser; the framework route is planned). After a reload the
   UI does not know the profile: treat any `401 unauthorized` as signed out.
 - Also under `/api/identity/`: `PUT profile`, `GET sessions` and `DELETE sessions/{id}`, `GET|POST users` and
   `PUT users/{id}` (administrators: `loom.admin`), `GET|POST keys` and `DELETE keys/{id}`, `POST pairing-codes`,
@@ -174,9 +184,9 @@ a real browser). If a proxy changes the origin, list it in `identity.allowed_ori
 - Key creation `POST /api/identity/keys {name, scopes, audiences?, ttl_hours?}` -> 201 `{key: "key_...", credential}`;
   the key is shown once. `GET keys` -> `{"keys": [...]}`, and an empty list is `{"keys": null}` (treat null as empty);
   revoked keys vanish. The key, pairing-code and user routes need the app's admin scope, `loom.admin` (the app name plus `.admin`);
-  the owner holds `*`, which covers it. Treat a 403 `scope_required` as "denied". (Per the identity contract in Torque
-  CW-20261112-0080, comments 23312 and 23321; the `GET /api/identity/profile` route and the exact scope check on
-  `keys` were not exercised on this branch.)
+  the owner holds `*`, which covers it. A signed-in non-admin gets `403 scope_required` with message
+  "required scope: loom.admin"; the owner gets 200 (`{"keys": null}` when empty). Treat 403 as "denied". (Observed in
+  a browser; the contract is Torque CW-20261112-0080, comments 23312 and 23321.)
 
 **Errors.** Every non-2xx `/api/` response is `{"code": "...", "message": "...", "details"?}`. Show `message`. Codes seen:
 `unauthorized` 401 (no or bad credential: the signed-out signal), `invalid_login` 401, `scope_required` 403 (the

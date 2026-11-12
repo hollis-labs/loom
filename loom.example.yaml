@@ -15,3 +15,7 @@ loom:
   # otel_enabled: false
   # otel_metrics: false
   # otel_endpoint: ""
+# DEVELOPMENT ONLY: running the Vite dev server against this backend needs its origin allowed for cookie
+# writes (otherwise 403 bad_origin). Never put this in a deployed config.
+# identity:
+#   allowed_origins: ["http://localhost:5173"]
