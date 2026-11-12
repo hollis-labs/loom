@@ -167,12 +167,14 @@ Today: `loom mcp --no-project -db …/main.db`. After the cutover the service an
 service and **no `-db`**. It then resolves the same data directory, the same signing key and the same
 `workspaces/default/loom.db`; the tests show it writes no second key and its write is visible through the service.
 
-1. **Local trust, and what it means here.** `loom mcp` runs as the verified principal `local:operator` with exactly
-   `loom.mcp loom.read loom.write`, with no key file. The module trusts any process run by a user who can open the data
-   file and cannot tell who launched it: **the Tether gateway serves several agents through this one child, so every
-   agent the gateway lets reach it can call every loom tool, writes included**, unless the gateway authorizes per
-   caller. That is the owner's decision at approval. To keep per-caller keys instead, create one key for the child in
-   step 1.5 and name it in `mcp.stdio_token_file` in the shared config (the service never reads it); nothing else changes.
+1. **Decided by the owner: local trust for the gateway's shared child, no key file.** `loom mcp` runs as the verified
+   principal `local:operator` with exactly `loom.mcp loom.read loom.write`. The module trusts any process run by a user
+   who can open the data file and cannot tell who launched it: **the Tether gateway serves several agents through this
+   one child, so every agent the gateway lets reach it can call every loom tool, writes included**, unless the gateway
+   authorizes per caller. The child is launched with the service's `SUBSTRATE_CONFIG` and no `-db`, and gets no key in
+   step 1.5. Per-agent identity is the follow-up, Torque CW-20261112-0120. (The mechanism it would use exists today:
+   one key for the child named in `mcp.stdio_token_file` in the shared config, which the service never reads; the
+   owner chose not to use it now.)
 2. Change the launch config (Tether side, routed through the driver): `loom mcp --no-project`, environment
    `SUBSTRATE_CONFIG=~/.config/loom/loom.yaml`, binary `~/.local/bin/loom`, no `-db`. Start it **after** step 1.7 has
    passed (the service first, the child second; this also holds for every later release that carries a migration).
@@ -219,8 +221,7 @@ choice. An unmigrated checkout is not harmed by the new binary: `loom mcp` stops
 ## Open items
 
 - Who calls the service on the loopback port (step 0.4).
-- Owner's decision: the gateway child under local trust gives every agent the gateway lets through all three scopes
-  (section 2, step 1), or per-caller keys via `mcp.stdio_token_file`.
+- Decided: the gateway child runs under local trust (section 2, step 1); per-agent identity is CW-20261112-0120.
 - The build workflow (PR #16) runs on the org build runner and has not run on a merged commit yet; its first run is
   the proof that the tarball and the UI check work there.
 - Installer behaviour the driver verifies with a `--dry-run` at cutover (the plan does not run it): the
