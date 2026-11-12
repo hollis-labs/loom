@@ -42,9 +42,12 @@ Not known: who calls `127.0.0.1:8092`. Ask before cutover (step 1.4).
 
 ## Step zero: the live data directory holds only the old files (before anything else, every host)
 
-Any run of the new binary, even `loom --help`, `loom status` or `loom path`, boots the modules and **creates** a
-database, a signing key and its JWKS file in whichever data directory it resolves (a stray run of a new build did
-exactly this in another application's live directory). Nothing in this plan may be the first run to find out.
+A run of the new binary that boots the modules (`serve`, `mcp`, the data commands, `identity setup`/`key create`)
+**creates** a database, a signing key and its JWKS file in whichever data directory it resolves (a stray run of a new
+build did exactly this in another application's live directory). `--help`, `version`, `path`, `config`, `health` and
+`status` on a directory with no migrated database create nothing (tested with the real binary against an empty home, a
+home with only an old `main.db` and a checkout with only an old `.loom`), but this list is the check, not that
+promise. Nothing in this plan may be the first run to find out.
 
 1. List the live data directory, recursively and with sizes and times, as the service's user, and change nothing:
    `find ~/.local/share/loom -ls` (the laptop: the same, plus each project's `.loom/data`).
