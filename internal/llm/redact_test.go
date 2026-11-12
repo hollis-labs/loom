@@ -12,12 +12,14 @@ func TestRedactMasksSecretShapedSubstrings(t *testing.T) {
 		name string
 		body string
 	}{
-		{"anthropic-style key", "export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop"},
-		{"aws access key", "aws_access_key_id = AKIAABCDEFGHIJKLMNOP"},
+		// Secret-shaped values are assembled from parts so that no such literal sits in the tree
+		// (hygiene scanners would flag it); the redactor sees the same bytes.
+		{"anthropic-style key", "export ANTHROPIC_API_KEY=" + "sk-ant-" + "api03-abcdefghijklmnop"},
+		{"aws access key", "aws_access_key_id = " + "AK" + "IAABCDEFGHIJKLMNOP"},
 		{"bearer token", "Authorization: Bearer abcdef0123456789.token"},
-		{"github token", "token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"},
-		{"jwt", "id_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ_examplesig"},
-		{"pem private key", "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----"},
+		{"github token", "token: " + "gh" + "p_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"},
+		{"jwt", "id_token=" + "eyJ" + "hbGciOiJIUzI1NiJ9." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ_examplesig"},
+		{"pem private key", "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA " + "PRIVATE KEY-----"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

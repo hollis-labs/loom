@@ -19,8 +19,10 @@ import (
 	otelprop "github.com/hollis-labs/libs/core/util/otel/propagation"
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/mcp"
+	"github.com/hollis-labs/loom/internal/mcp/mcptest"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 type recordedToolCall struct {
@@ -39,16 +41,13 @@ func (r *fakeToolRecorder) ToolCall(_ context.Context, toolName, result string, 
 
 func TestMCPToolsReturnDeterministicJSON(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# MCP Page\n\nBody"})
 	if err != nil {
@@ -57,14 +56,14 @@ func TestMCPToolsReturnDeterministicJSON(t *testing.T) {
 	var job struct {
 		Status string `json:"status"`
 	}
-	if err := decodeAny(raw, &job); err != nil {
-		t.Fatalf("compile json: %v", err)
+	if err2 := decodeAny(raw, &job); err2 != nil {
+		t.Fatalf("compile json: %v", err2)
 	}
 	if job.Status != "completed" {
 		t.Fatalf("job = %+v", job)
 	}
-	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# MCP Zed\n\nBody"}); err != nil {
-		t.Fatalf("second compile tool: %v", err)
+	if _, err2 := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# MCP Zed\n\nBody"}); err2 != nil {
+		t.Fatalf("second compile tool: %v", err2)
 	}
 
 	raw, err = srv.CallTool(ctx, "loom_page_search", map[string]any{"bundle": "nanite", "q": "MCP", "limit": 1})
@@ -87,16 +86,13 @@ func TestMCPToolsReturnDeterministicJSON(t *testing.T) {
 
 func TestMCPBundlePutAndGet(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_bundle_put", map[string]any{"slug": "team wiki", "title": "Team Wiki", "description": "first"})
 	if err != nil {
@@ -106,8 +102,8 @@ func TestMCPBundlePutAndGet(t *testing.T) {
 		Slug  string `json:"slug"`
 		Title string `json:"title"`
 	}
-	if err := decodeAny(raw, &bundle); err != nil {
-		t.Fatalf("bundle put json: %v", err)
+	if err2 := decodeAny(raw, &bundle); err2 != nil {
+		t.Fatalf("bundle put json: %v", err2)
 	}
 	if bundle.Slug != "team-wiki" || bundle.Title != "Team Wiki" {
 		t.Fatalf("bundle = %+v", bundle)
@@ -127,16 +123,13 @@ func TestMCPBundlePutAndGet(t *testing.T) {
 func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := storage.Open(ctx, filepath.Join(dir, "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(dir, "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
+	srv := mcptest.NewWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
 
 	raw, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"input": "# Defaulted MCP\n\nBody"})
 	if err != nil {
@@ -146,8 +139,8 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 		BundleID int64  `json:"bundle_id"`
 		Status   string `json:"status"`
 	}
-	if err := decodeAny(raw, &job); err != nil {
-		t.Fatalf("compile json: %v", err)
+	if err2 := decodeAny(raw, &job); err2 != nil {
+		t.Fatalf("compile json: %v", err2)
 	}
 	if job.Status != "completed" {
 		t.Fatalf("job = %+v", job)
@@ -170,8 +163,8 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 			Slug string `json:"slug"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &env); err != nil {
-		t.Fatalf("search json: %v", err)
+	if err2 := decodeAny(raw, &env); err2 != nil {
+		t.Fatalf("search json: %v", err2)
 	}
 	if env.Count != 1 || env.Items[0].Slug != "defaulted-mcp" {
 		t.Fatalf("env = %+v", env)
@@ -181,12 +174,12 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
+	if err2 := os.Chdir(dir); err2 != nil {
+		t.Fatalf("chdir: %v", err2)
 	}
 	t.Cleanup(func() {
-		if err := os.Chdir(wd); err != nil {
-			t.Fatalf("restore wd: %v", err)
+		if err2 := os.Chdir(wd); err2 != nil {
+			t.Fatalf("restore wd: %v", err2)
 		}
 	})
 	raw, err = srv.CallTool(ctx, "loom_export_bundle", map[string]any{})
@@ -209,16 +202,13 @@ func TestMCPDefaultsDoNotLeakNilSentinel(t *testing.T) {
 
 func TestMCPDefaultedArgumentsAreOptionalInSchemas(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	want := map[string][]string{
 		"loom_page_search":             nil,
@@ -248,18 +238,15 @@ func TestMCPDefaultedArgumentsAreOptionalInSchemas(t *testing.T) {
 
 func TestMCPStatus(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
-	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# Status Page\n\nBody"}); err != nil {
-		t.Fatalf("compile: %v", err)
+	srv := mcptest.New(repo, service.NewCompiler(repo))
+	if _, err2 := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# Status Page\n\nBody"}); err2 != nil {
+		t.Fatalf("compile: %v", err2)
 	}
 	raw, err := srv.CallTool(ctx, "loom_status", map[string]any{})
 	if err != nil {
@@ -293,16 +280,13 @@ func TestMCPToolCallsEmitOTelSpan(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	if _, err := srv.CallTool(ctx, "loom_status", map[string]any{}); err != nil {
 		t.Fatalf("status tool: %v", err)
@@ -331,19 +315,16 @@ func TestMCPToolTraceparentBecomesParentSpan(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	parentCtx, parent := otel.Tracer("loom-test").Start(ctx, "parent")
-	args := otelprop.InjectMCP(parentCtx, map[string]any{})
+	args := otelprop.InjectMCP(parentCtx, map[string]any{}) //nolint:staticcheck // exercises the legacy argument-carried trace context kept for older callers
 	parent.End()
 
 	if _, err := srv.CallTool(ctx, "loom_status", args); err != nil {
@@ -373,16 +354,13 @@ func TestMCPToolErrorsMarkOTelSpan(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	if _, err := srv.CallTool(ctx, "loom_bundle_get", map[string]any{"slug": "missing"}); err == nil {
 		t.Fatalf("bundle get missing returned nil error")
@@ -401,17 +379,14 @@ func TestMCPToolErrorsMarkOTelSpan(t *testing.T) {
 
 func TestMCPToolCallsRecordMetrics(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	recorder := &fakeToolRecorder{}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{Recorder: recorder})
+	srv := mcptest.NewWithOptions(repo, service.NewCompiler(repo), mcp.Options{Recorder: recorder})
 
 	if _, err := srv.CallTool(ctx, "loom_status", map[string]any{}); err != nil {
 		t.Fatalf("status tool: %v", err)
@@ -432,16 +407,13 @@ func TestMCPToolCallsRecordMetrics(t *testing.T) {
 
 func TestMCPPageLinks(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	_, err = srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Links","body":"See [Runtime](runtime) and [[Compile Jobs]]."}`})
 	if err != nil {
@@ -457,8 +429,8 @@ func TestMCPPageLinks(t *testing.T) {
 			Target string `json:"target"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &env); err != nil {
-		t.Fatalf("links json: %v", err)
+	if err2 := decodeAny(raw, &env); err2 != nil {
+		t.Fatalf("links json: %v", err2)
 	}
 	if env.Count != 2 || env.Items[0].Target != "runtime" || env.Items[1].Target != "compile-jobs" {
 		t.Fatalf("env = %+v", env)
@@ -477,16 +449,13 @@ func TestMCPPageLinks(t *testing.T) {
 
 func TestMCPPageVerifications(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	_, err = srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Verify","summary":"summary","body":"Body","source":"test"}`})
 	if err != nil {
@@ -503,8 +472,8 @@ func TestMCPPageVerifications(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &env); err != nil {
-		t.Fatalf("verifications json: %v", err)
+	if err2 := decodeAny(raw, &env); err2 != nil {
+		t.Fatalf("verifications json: %v", err2)
 	}
 	if env.Count != 4 || env.Items[0].Kind != "heading" || env.Items[0].Status != "passed" {
 		t.Fatalf("env = %+v", env)
@@ -523,16 +492,13 @@ func TestMCPPageVerifications(t *testing.T) {
 
 func TestMCPPageAndBundleConformance(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	_, err = srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Conformance","summary":"summary","body":"Body","source":"test"}`})
 	if err != nil {
@@ -549,8 +515,8 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 			Rule string `json:"rule"`
 		} `json:"findings"`
 	}
-	if err := decodeAny(raw, &pageReport); err != nil {
-		t.Fatalf("page conformance json: %v", err)
+	if err2 := decodeAny(raw, &pageReport); err2 != nil {
+		t.Fatalf("page conformance json: %v", err2)
 	}
 	if !pageReport.Passed || len(pageReport.Findings) != 0 {
 		t.Fatalf("page conformance = %+v, want passed with no findings", pageReport)
@@ -566,8 +532,8 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 			Passed bool `json:"passed"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &bundleEnv); err != nil {
-		t.Fatalf("bundle conformance json: %v", err)
+	if err2 := decodeAny(raw, &bundleEnv); err2 != nil {
+		t.Fatalf("bundle conformance json: %v", err2)
 	}
 	if bundleEnv.Count != 1 || !bundleEnv.Items[0].Passed {
 		t.Fatalf("bundle conformance env = %+v", bundleEnv)
@@ -577,8 +543,8 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 	// UpsertPage (direct SQL, a legacy row predating the OKF migration)
 	// where Type's write-time default never ran, so the tool has
 	// something real to flag.
-	if _, err := repo.DB().ExecContext(ctx, `UPDATE wiki_pages SET type = '' WHERE slug = 'mcp-conformance'`); err != nil {
-		t.Fatalf("simulate blank type: %v", err)
+	if _, err2 := repo.DB().ExecContext(ctx, `UPDATE wiki_pages SET type = '' WHERE slug = 'mcp-conformance'`); err2 != nil {
+		t.Fatalf("simulate blank type: %v", err2)
 	}
 
 	raw, err = srv.CallTool(ctx, "loom_page_conformance", map[string]any{"bundle": "nanite", "slug": "mcp-conformance"})
@@ -595,16 +561,13 @@ func TestMCPPageAndBundleConformance(t *testing.T) {
 
 func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_compile_from_directives", map[string]any{
 		"bundle": "nanite",
@@ -619,8 +582,8 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			ID int64 `json:"id"`
 		} `json:"jobs"`
 	}
-	if err := decodeAny(raw, &result); err != nil {
-		t.Fatalf("compile directives json: %v", err)
+	if err2 := decodeAny(raw, &result); err2 != nil {
+		t.Fatalf("compile directives json: %v", err2)
 	}
 	if len(result.Jobs) != 1 {
 		t.Fatalf("result = %+v", result)
@@ -634,8 +597,8 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"events"`
 	}
-	if err := decodeAny(raw, &detail); err != nil {
-		t.Fatalf("job get json: %v", err)
+	if err2 := decodeAny(raw, &detail); err2 != nil {
+		t.Fatalf("job get json: %v", err2)
 	}
 	if len(detail.Events) != 3 || detail.Events[2].Status != "completed" {
 		t.Fatalf("detail = %+v", detail)
@@ -652,8 +615,8 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 			Command string `json:"command"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &entries); err != nil {
-		t.Fatalf("directive list json: %v", err)
+	if err2 := decodeAny(raw, &entries); err2 != nil {
+		t.Fatalf("directive list json: %v", err2)
 	}
 	if entries.Count != 1 || entries.Items[0].Hash == "" || entries.Items[0].Command != "note" {
 		t.Fatalf("entries = %+v", entries)
@@ -675,16 +638,13 @@ func TestMCPCompileFromDirectivesAndJobGet(t *testing.T) {
 
 func TestMCPCompileFailureJobGet(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{
 		"bundle":    "nanite",
@@ -699,8 +659,8 @@ func TestMCPCompileFailureJobGet(t *testing.T) {
 		Status string `json:"status"`
 		Error  string `json:"error"`
 	}
-	if err := decodeAny(raw, &job); err != nil {
-		t.Fatalf("compile json: %v", err)
+	if err2 := decodeAny(raw, &job); err2 != nil {
+		t.Fatalf("compile json: %v", err2)
 	}
 	if job.ID == 0 || job.Status != "failed" || job.Error == "" {
 		t.Fatalf("job = %+v, want failed job", job)
@@ -734,24 +694,21 @@ func TestMCPCompileFailureJobGet(t *testing.T) {
 
 func TestMCPCompileJobListFilters(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	if _, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "team", Title: "Team"}); err != nil {
-		t.Fatalf("UpsertBundle: %v", err)
+	if _, err2 := repo.UpsertBundle(ctx, domain.Bundle{Slug: "team", Title: "Team"}); err2 != nil {
+		t.Fatalf("UpsertBundle: %v", err2)
 	}
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
-	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# Nanite Job"}); err != nil {
-		t.Fatalf("nanite compile: %v", err)
+	srv := mcptest.New(repo, service.NewCompiler(repo))
+	if _, err2 := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": "# Nanite Job"}); err2 != nil {
+		t.Fatalf("nanite compile: %v", err2)
 	}
-	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "team", "generator": "wiki_page", "input": "# Team Job"}); err != nil {
-		t.Fatalf("team compile: %v", err)
+	if _, err2 := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "team", "generator": "wiki_page", "input": "# Team Job"}); err2 != nil {
+		t.Fatalf("team compile: %v", err2)
 	}
 	raw, err := srv.CallTool(ctx, "loom_compile_job_list", map[string]any{"bundle": "team", "status": "completed", "limit": float64(10)})
 	if err != nil {
@@ -773,16 +730,13 @@ func TestMCPCompileJobListFilters(t *testing.T) {
 
 func TestMCPTemplateTools(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_template_put", map[string]any{"name": "wiki_page.compact", "generator": "wiki_page", "body": "# {{title}}"})
 	if err != nil {
@@ -791,8 +745,8 @@ func TestMCPTemplateTools(t *testing.T) {
 	var tpl struct {
 		Name string `json:"name"`
 	}
-	if err := decodeAny(raw, &tpl); err != nil {
-		t.Fatalf("put json: %v", err)
+	if err2 := decodeAny(raw, &tpl); err2 != nil {
+		t.Fatalf("put json: %v", err2)
 	}
 	if tpl.Name != "wiki_page.compact" {
 		t.Fatalf("tpl = %+v", tpl)
@@ -805,8 +759,8 @@ func TestMCPTemplateTools(t *testing.T) {
 	var env struct {
 		Count int `json:"count"`
 	}
-	if err := decodeAny(raw, &env); err != nil {
-		t.Fatalf("list json: %v", err)
+	if err2 := decodeAny(raw, &env); err2 != nil {
+		t.Fatalf("list json: %v", err2)
 	}
 	if env.Count != 2 {
 		t.Fatalf("env = %+v, want seeded plus new template", env)
@@ -832,21 +786,18 @@ func TestMCPTemplateTools(t *testing.T) {
 
 func TestMCPIngestFiles(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp-ingest.md")
-	if err := os.WriteFile(path, []byte("# MCP Ingest\n\nBody"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	if err2 := os.WriteFile(path, []byte("# MCP Ingest\n\nBody"), 0o600); err2 != nil {
+		t.Fatalf("write: %v", err2)
 	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_ingest_files", map[string]any{"bundle": "nanite", "source": "mcp", "paths": []any{path}})
 	if err != nil {
@@ -858,8 +809,8 @@ func TestMCPIngestFiles(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"jobs"`
 	}
-	if err := decodeAny(raw, &result); err != nil {
-		t.Fatalf("ingest json: %v", err)
+	if err2 := decodeAny(raw, &result); err2 != nil {
+		t.Fatalf("ingest json: %v", err2)
 	}
 	if result.Items != 1 || len(result.Jobs) != 1 || result.Jobs[0].Status != "completed" {
 		t.Fatalf("result = %+v", result)
@@ -876,8 +827,8 @@ func TestMCPIngestFiles(t *testing.T) {
 			SourceKey string `json:"source_key"`
 		} `json:"items"`
 	}
-	if err := decodeAny(raw, &env); err != nil {
-		t.Fatalf("ingest list json: %v", err)
+	if err2 := decodeAny(raw, &env); err2 != nil {
+		t.Fatalf("ingest list json: %v", err2)
 	}
 	if env.Count != 1 || env.Items[0].Hash == "" || env.Items[0].SourceKey != path {
 		t.Fatalf("env = %+v", env)
@@ -900,16 +851,13 @@ func TestMCPIngestFiles(t *testing.T) {
 
 func TestMCPIngestText(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServer(repo, service.NewCompiler(repo))
+	srv := mcptest.New(repo, service.NewCompiler(repo))
 
 	raw, err := srv.CallTool(ctx, "loom_ingest_text", map[string]any{"bundle": "nanite", "source": "chatgpt", "source_key": "thread-1", "title": "Thread Notes", "body": "Text body"})
 	if err != nil {
@@ -931,19 +879,16 @@ func TestMCPIngestText(t *testing.T) {
 func TestMCPExportBundle(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := storage.Open(ctx, filepath.Join(dir, "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(dir, "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
+	srv := mcptest.NewWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: filepath.Join(dir, "exports")})
 
-	if _, err := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Export","summary":"summary","body":"See [[Other Page]].","source":"test"}`}); err != nil {
-		t.Fatalf("compile tool: %v", err)
+	if _, err2 := srv.CallTool(ctx, "loom_compile_request", map[string]any{"bundle": "nanite", "generator": "wiki_page", "input": `{"title":"MCP Export","summary":"summary","body":"See [[Other Page]].","source":"test"}`}); err2 != nil {
+		t.Fatalf("compile tool: %v", err2)
 	}
 
 	exportDir := filepath.Join(dir, "exports", "exported")
@@ -955,8 +900,8 @@ func TestMCPExportBundle(t *testing.T) {
 		Dir   string   `json:"dir"`
 		Files []string `json:"files"`
 	}
-	if err := decodeAny(raw, &exp); err != nil {
-		t.Fatalf("export json: %v", err)
+	if err2 := decodeAny(raw, &exp); err2 != nil {
+		t.Fatalf("export json: %v", err2)
 	}
 	if exp.Dir != exportDir {
 		t.Fatalf("export dir = %q, want %q", exp.Dir, exportDir)
@@ -969,8 +914,8 @@ func TestMCPExportBundle(t *testing.T) {
 		if exp.Files[i] != wantFiles[i] {
 			t.Fatalf("files = %+v, want %+v", exp.Files, wantFiles)
 		}
-		if _, err := os.Stat(filepath.Join(exportDir, wantFiles[i])); err != nil {
-			t.Fatalf("exported file %s: %v", wantFiles[i], err)
+		if _, err2 := os.Stat(filepath.Join(exportDir, wantFiles[i])); err2 != nil {
+			t.Fatalf("exported file %s: %v", wantFiles[i], err2)
 		}
 	}
 
@@ -978,12 +923,12 @@ func TestMCPExportBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
+	if err2 := os.Chdir(dir); err2 != nil {
+		t.Fatalf("chdir: %v", err2)
 	}
 	t.Cleanup(func() {
-		if err := os.Chdir(wd); err != nil {
-			t.Fatalf("restore wd: %v", err)
+		if err2 := os.Chdir(wd); err2 != nil {
+			t.Fatalf("restore wd: %v", err2)
 		}
 	})
 	raw, err = srv.CallTool(ctx, "loom_export_bundle", map[string]any{"bundle": "nanite"})

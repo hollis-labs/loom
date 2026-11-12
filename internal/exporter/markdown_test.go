@@ -11,22 +11,20 @@ import (
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/exporter"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	b, _ := repo.GetBundle(ctx, "nanite")
-	if _, err := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "overview", Title: "Overview", Summary: "Intro", Body: "# Overview\n\nSee [Runtime](runtime)."}); err != nil {
-		t.Fatalf("upsert: %v", err)
+	if _, err2 := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "overview", Title: "Overview", Summary: "Intro", Body: "# Overview\n\nSee [Runtime](runtime)."}); err2 != nil {
+		t.Fatalf("upsert: %v", err2)
 	}
 	dir := t.TempDir()
 	exp, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir)
@@ -36,14 +34,14 @@ func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 	if len(exp.Files) != 3 {
 		t.Fatalf("files = %+v, want index/log/page", exp.Files)
 	}
-	index, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	index, err := os.ReadFile(filepath.Join(dir, "index.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
 	if !strings.Contains(string(index), "[Overview](overview.md)") {
 		t.Fatalf("index = %s", string(index))
 	}
-	page, err := os.ReadFile(filepath.Join(dir, "overview.md"))
+	page, err := os.ReadFile(filepath.Join(dir, "overview.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read page: %v", err)
 	}
@@ -53,7 +51,7 @@ func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 	if !strings.Contains(string(page), "## Verifications") || !strings.Contains(string(page), "| heading | passed |") {
 		t.Fatalf("page missing verifications section = %s", string(page))
 	}
-	log, err := os.ReadFile(filepath.Join(dir, "log.md"))
+	log, err := os.ReadFile(filepath.Join(dir, "log.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -64,14 +62,11 @@ func TestExportBundleWritesIndexLogAndPages(t *testing.T) {
 
 func TestExportBundlePageFrontmatterIsFullOKFShape(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	b, err := repo.GetBundle(ctx, "nanite")
 	if err != nil {
@@ -98,10 +93,10 @@ func TestExportBundlePageFrontmatterIsFullOKFShape(t *testing.T) {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 	dir := t.TempDir()
-	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err != nil {
-		t.Fatalf("ExportBundle: %v", err)
+	if _, err2 := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err2 != nil {
+		t.Fatalf("ExportBundle: %v", err2)
 	}
-	page, err := os.ReadFile(filepath.Join(dir, "runtime-notes.md"))
+	page, err := os.ReadFile(filepath.Join(dir, "runtime-notes.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read page: %v", err)
 	}
@@ -131,14 +126,11 @@ func TestExportBundlePageFrontmatterIsFullOKFShape(t *testing.T) {
 
 func TestExportBundleEscapesMarkdownControlCharacters(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	b, err := repo.GetBundle(ctx, "nanite")
 	if err != nil {
@@ -155,10 +147,10 @@ func TestExportBundleEscapesMarkdownControlCharacters(t *testing.T) {
 		t.Fatalf("UpsertPage: %v", err)
 	}
 	dir := t.TempDir()
-	if _, err := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err != nil {
-		t.Fatalf("ExportBundle: %v", err)
+	if _, err2 := exporter.ExportBundle(ctx, repo, "nanite", dir, dir); err2 != nil {
+		t.Fatalf("ExportBundle: %v", err2)
 	}
-	page, err := os.ReadFile(filepath.Join(dir, "escape-check.md"))
+	page, err := os.ReadFile(filepath.Join(dir, "escape-check.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read page: %v", err)
 	}

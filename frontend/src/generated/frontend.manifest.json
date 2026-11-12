@@ -1,0 +1,473 @@
+{
+  "manifest_version": 0,
+  "app": "loom",
+  "variant": "app-host",
+  "profiles": [
+    "minimal"
+  ],
+  "modules": [
+    "config",
+    "logging",
+    "health",
+    "secrets",
+    "auth",
+    "database",
+    "httphost",
+    "identity",
+    "mcp",
+    "cli"
+  ],
+  "contributions": [
+    {
+      "schema_version": 0,
+      "module": "auth",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/me",
+          "scope": "authenticated"
+        }
+      ]
+    },
+    {
+      "schema_version": 0,
+      "module": "identity",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/setup",
+          "scope": "public"
+        },
+        {
+          "method": "POST",
+          "path": "/api/setup",
+          "scope": "public"
+        },
+        {
+          "method": "POST",
+          "path": "/api/login",
+          "scope": "public"
+        },
+        {
+          "method": "GET",
+          "path": "/api/identity/jwks",
+          "scope": "public"
+        },
+        {
+          "method": "POST",
+          "path": "/api/pair",
+          "scope": "public"
+        },
+        {
+          "method": "POST",
+          "path": "/api/logout",
+          "scope": "authenticated"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/password",
+          "scope": "authenticated"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/identity/profile",
+          "scope": "authenticated"
+        },
+        {
+          "method": "POST",
+          "path": "/api/token",
+          "scope": "authenticated"
+        },
+        {
+          "method": "GET",
+          "path": "/api/identity/sessions",
+          "scope": "authenticated"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/identity/sessions/",
+          "scope": "authenticated"
+        },
+        {
+          "method": "GET",
+          "path": "/api/identity/users",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "POST",
+          "path": "/api/identity/users",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/identity/users/",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "GET",
+          "path": "/api/identity/keys",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "POST",
+          "path": "/api/identity/keys",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/identity/keys/",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "POST",
+          "path": "/api/identity/pairing-codes",
+          "scope": "{app}.admin"
+        }
+      ]
+    },
+    {
+      "schema_version": 0,
+      "module": "loom",
+      "contributions": [
+        {
+          "kind": "nav.item",
+          "key": "bundles",
+          "label": "Bundles",
+          "icon": "briefcase",
+          "priority": 1,
+          "route": "/"
+        },
+        {
+          "kind": "surface",
+          "key": "bundles",
+          "label": "Bundles",
+          "route": "/",
+          "layout": "list",
+          "title": "Bundles"
+        },
+        {
+          "kind": "nav.item",
+          "key": "pages",
+          "label": "Pages",
+          "icon": "files",
+          "priority": 2,
+          "route": "/pages"
+        },
+        {
+          "kind": "surface",
+          "key": "pages",
+          "label": "Pages",
+          "route": "/pages",
+          "layout": "list",
+          "title": "Pages"
+        },
+        {
+          "kind": "nav.item",
+          "key": "jobs",
+          "label": "Compile jobs",
+          "icon": "scroll-text",
+          "priority": 3,
+          "route": "/jobs"
+        },
+        {
+          "kind": "surface",
+          "key": "jobs",
+          "label": "Compile jobs",
+          "route": "/jobs",
+          "layout": "list",
+          "title": "Compile jobs"
+        },
+        {
+          "kind": "nav.item",
+          "key": "exports",
+          "label": "Exports",
+          "icon": "file-down",
+          "priority": 4,
+          "route": "/exports"
+        },
+        {
+          "kind": "surface",
+          "key": "exports",
+          "label": "Exports",
+          "route": "/exports",
+          "layout": "form",
+          "title": "Exports"
+        },
+        {
+          "kind": "nav.item",
+          "key": "directives",
+          "label": "Directives",
+          "icon": "braces",
+          "priority": 5,
+          "route": "/directives"
+        },
+        {
+          "kind": "surface",
+          "key": "directives",
+          "label": "Directives",
+          "route": "/directives",
+          "layout": "form",
+          "title": "Directives"
+        },
+        {
+          "kind": "nav.item",
+          "key": "sign-out",
+          "label": "Sign out",
+          "icon": "log-out",
+          "region": "nav.footer",
+          "route": "/sign-out"
+        },
+        {
+          "kind": "surface",
+          "key": "sign-out",
+          "label": "Sign out",
+          "route": "/sign-out",
+          "layout": "form",
+          "title": "Sign out"
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "nav.item",
+      "key": "bundles",
+      "label": "Bundles",
+      "icon": "briefcase",
+      "priority": 1,
+      "route": "/",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "pages",
+      "label": "Pages",
+      "icon": "files",
+      "priority": 2,
+      "route": "/pages",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "jobs",
+      "label": "Compile jobs",
+      "icon": "scroll-text",
+      "priority": 3,
+      "route": "/jobs",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "exports",
+      "label": "Exports",
+      "icon": "file-down",
+      "priority": 4,
+      "route": "/exports",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "directives",
+      "label": "Directives",
+      "icon": "braces",
+      "priority": 5,
+      "route": "/directives",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "bundles",
+      "label": "Bundles",
+      "route": "/",
+      "layout": "list",
+      "title": "Bundles",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "directives",
+      "label": "Directives",
+      "route": "/directives",
+      "layout": "form",
+      "title": "Directives",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "exports",
+      "label": "Exports",
+      "route": "/exports",
+      "layout": "form",
+      "title": "Exports",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "jobs",
+      "label": "Compile jobs",
+      "route": "/jobs",
+      "layout": "list",
+      "title": "Compile jobs",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "pages",
+      "label": "Pages",
+      "route": "/pages",
+      "layout": "list",
+      "title": "Pages",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "sign-out",
+      "label": "Sign out",
+      "icon": "log-out",
+      "region": "nav.footer",
+      "route": "/sign-out",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "sign-out",
+      "label": "Sign out",
+      "route": "/sign-out",
+      "layout": "form",
+      "title": "Sign out",
+      "module": "loom"
+    }
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "scope": "authenticated",
+      "module": "auth"
+    },
+    {
+      "method": "GET",
+      "path": "/api/setup",
+      "scope": "public",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/setup",
+      "scope": "public",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/login",
+      "scope": "public",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/jwks",
+      "scope": "public",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pair",
+      "scope": "public",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/logout",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/password",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/identity/profile",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/token",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/sessions",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/identity/sessions/",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/users",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/identity/users",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/identity/users/",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/keys",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/identity/keys",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/identity/keys/",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/identity/pairing-codes",
+      "scope": "{app}.admin",
+      "module": "identity"
+    }
+  ],
+  "regions": [],
+  "kits": [
+    {
+      "name": "@hollis-labs/design-app-runtime",
+      "version": "0.5.0"
+    },
+    {
+      "name": "@hollis-labs/design-components",
+      "version": "0.5.1"
+    },
+    {
+      "name": "@hollis-labs/design-tokens",
+      "version": "0.5.0"
+    }
+  ],
+  "bindings": []
+}

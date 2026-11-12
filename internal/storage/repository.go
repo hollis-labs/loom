@@ -21,8 +21,19 @@ var (
 	ErrInvalid  = errors.New("invalid input")
 )
 
+// Reader is the read side of a store: SELECTs only.
+type Reader interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// Repository reads through reader and writes through db. On the Substrate store db is the single
+// write connection (a statement issued while another cursor or transaction holds it waits for
+// it), and reader is the separate read-only pool, so a read never queues behind a write and a
+// list that is still open cannot block the next query.
 type Repository struct {
-	db *sql.DB
+	db     *sql.DB
+	reader Reader
 }
 
 type JobFilter struct {
@@ -31,8 +42,21 @@ type JobFilter struct {
 	Limit    int
 }
 
+// NewRepository reads and writes through db. Tests and tools that have one connection use it.
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
+}
+
+// NewRepositoryRW writes through db and reads through reader.
+func NewRepositoryRW(db *sql.DB, reader Reader) *Repository {
+	return &Repository{db: db, reader: reader}
+}
+
+func (r *Repository) rd() Reader {
+	if r.reader != nil {
+		return r.reader
+	}
+	return r.db
 }
 
 func (r *Repository) DB() *sql.DB {
@@ -59,7 +83,7 @@ func (r *Repository) Stats(ctx context.Context) (domain.RepositoryStats, error) 
 		{&stats.VerificationWarnings, `SELECT COUNT(*) FROM wiki_verifications WHERE status = 'warning'`},
 	}
 	for _, count := range counts {
-		if err := r.db.QueryRowContext(ctx, count.query).Scan(count.dst); err != nil {
+		if err := r.rd().QueryRowContext(ctx, count.query).Scan(count.dst); err != nil {
 			return domain.RepositoryStats{}, err
 		}
 	}
@@ -69,7 +93,7 @@ func (r *Repository) Stats(ctx context.Context) (domain.RepositoryStats, error) 
 const bundleColumns = `id, slug, title, description, scope, COALESCE(okf_export_path, ''), created_at, updated_at`
 
 func (r *Repository) ListBundles(ctx context.Context) ([]domain.Bundle, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles ORDER BY slug`)
+	rows, err := r.rd().QueryContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles ORDER BY slug`)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +110,7 @@ func (r *Repository) ListBundles(ctx context.Context) ([]domain.Bundle, error) {
 }
 
 func (r *Repository) GetBundle(ctx context.Context, slug string) (domain.Bundle, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles WHERE slug = ?`, slug)
+	row := r.rd().QueryRowContext(ctx, `SELECT `+bundleColumns+` FROM wiki_bundles WHERE slug = ?`, slug)
 	b, err := scanBundle(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Bundle{}, ErrNotFound
@@ -261,7 +285,7 @@ func (r *Repository) ListPages(ctx context.Context, bundleID int64, query string
 	}
 	stmt += ` ORDER BY title LIMIT ?`
 	args = append(args, limit)
-	rows, err := r.db.QueryContext(ctx, stmt, args...)
+	rows, err := r.rd().QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +310,7 @@ func (r *Repository) GetPageBySlug(ctx context.Context, bundleSlug, pageSlug str
 }
 
 func (r *Repository) GetPageByBundleSlug(ctx context.Context, bundleID int64, pageSlug string) (domain.Page, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+pageColumns+` FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, bundleID, pageSlug)
+	row := r.rd().QueryRowContext(ctx, `SELECT `+pageColumns+` FROM wiki_pages WHERE bundle_id = ? AND slug = ?`, bundleID, pageSlug)
 	p, err := scanPage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Page{}, ErrNotFound
@@ -295,7 +319,7 @@ func (r *Repository) GetPageByBundleSlug(ctx context.Context, bundleID int64, pa
 }
 
 func (r *Repository) ListPageLinks(ctx context.Context, pageID int64) ([]domain.Link, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, from_page_id, to_page_id, relation, target, kind, label, position FROM wiki_links WHERE from_page_id = ? ORDER BY position, id`, pageID)
+	rows, err := r.rd().QueryContext(ctx, `SELECT id, from_page_id, to_page_id, relation, target, kind, label, position FROM wiki_links WHERE from_page_id = ? ORDER BY position, id`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +339,7 @@ func (r *Repository) ListBundleLinks(ctx context.Context, bundleID int64, limit 
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.rd().QueryContext(ctx, `
 SELECT l.id, l.from_page_id, l.to_page_id, l.relation, l.target, l.kind, l.label, l.position
 FROM wiki_links l
 JOIN wiki_pages p ON p.id = l.from_page_id
@@ -338,7 +362,7 @@ LIMIT ?`, bundleID, limit)
 }
 
 func (r *Repository) ListPageVerifications(ctx context.Context, pageID int64) ([]domain.Verification, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, page_id, kind, status, message, "by", created_at FROM wiki_verifications WHERE page_id = ? ORDER BY id`, pageID)
+	rows, err := r.rd().QueryContext(ctx, `SELECT id, page_id, kind, status, message, "by", created_at FROM wiki_verifications WHERE page_id = ? ORDER BY id`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +382,7 @@ func (r *Repository) ListBundleVerifications(ctx context.Context, bundleID int64
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.rd().QueryContext(ctx, `
 SELECT v.id, v.page_id, v.kind, v.status, v.message, v."by", v.created_at
 FROM wiki_verifications v
 JOIN wiki_pages p ON p.id = v.page_id
@@ -403,7 +427,7 @@ func (r *Repository) AddEvent(ctx context.Context, jobID int64, status, message 
 }
 
 func (r *Repository) ListEvents(ctx context.Context, jobID int64) ([]domain.CompileEvent, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, job_id, status, message, created_at FROM compile_events WHERE job_id = ? ORDER BY id`, jobID)
+	rows, err := r.rd().QueryContext(ctx, `SELECT id, job_id, status, message, created_at FROM compile_events WHERE job_id = ? ORDER BY id`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +461,7 @@ func (r *Repository) ListJobs(ctx context.Context, filter JobFilter) ([]domain.C
 	}
 	stmt += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, filter.Limit)
-	rows, err := r.db.QueryContext(ctx, stmt, args...)
+	rows, err := r.rd().QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +478,7 @@ func (r *Repository) ListJobs(ctx context.Context, filter JobFilter) ([]domain.C
 }
 
 func (r *Repository) GetJob(ctx context.Context, id int64) (domain.CompileJob, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, bundle_id, generator, status, input, output, error, created_at, updated_at FROM compile_jobs WHERE id = ?`, id)
+	row := r.rd().QueryRowContext(ctx, `SELECT id, bundle_id, generator, status, input, output, error, created_at, updated_at FROM compile_jobs WHERE id = ?`, id)
 	j, err := scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.CompileJob{}, ErrNotFound
@@ -475,7 +499,7 @@ func (r *Repository) InsertDirective(ctx context.Context, hash, source, command,
 }
 
 func (r *Repository) GetDirective(ctx context.Context, hash string) (domain.LedgerEntry, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT hash, source, command, prompt, line, created_at FROM directive_ledger WHERE hash = ?`, hash)
+	row := r.rd().QueryRowContext(ctx, `SELECT hash, source, command, prompt, line, created_at FROM directive_ledger WHERE hash = ?`, hash)
 	entry, err := scanDirective(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.LedgerEntry{}, ErrNotFound
@@ -487,7 +511,7 @@ func (r *Repository) ListDirectives(ctx context.Context, limit int) ([]domain.Le
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT hash, source, command, prompt, line, created_at FROM directive_ledger ORDER BY created_at DESC, hash LIMIT ?`, limit)
+	rows, err := r.rd().QueryContext(ctx, `SELECT hash, source, command, prompt, line, created_at FROM directive_ledger ORDER BY created_at DESC, hash LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -536,7 +560,7 @@ WHERE hash = ?`, jobID, hash)
 }
 
 func (r *Repository) GetIngest(ctx context.Context, hash string) (domain.IngestLedgerEntry, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT hash, source, source_key, content_hash, COALESCE(job_id, 0), created_at, updated_at FROM ingest_ledger WHERE hash = ?`, hash)
+	row := r.rd().QueryRowContext(ctx, `SELECT hash, source, source_key, content_hash, COALESCE(job_id, 0), created_at, updated_at FROM ingest_ledger WHERE hash = ?`, hash)
 	entry, err := scanIngest(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.IngestLedgerEntry{}, ErrNotFound
@@ -548,7 +572,7 @@ func (r *Repository) ListIngest(ctx context.Context, limit int) ([]domain.Ingest
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT hash, source, source_key, content_hash, COALESCE(job_id, 0), created_at, updated_at FROM ingest_ledger ORDER BY created_at DESC, hash LIMIT ?`, limit)
+	rows, err := r.rd().QueryContext(ctx, `SELECT hash, source, source_key, content_hash, COALESCE(job_id, 0), created_at, updated_at FROM ingest_ledger ORDER BY created_at DESC, hash LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -565,7 +589,7 @@ func (r *Repository) ListIngest(ctx context.Context, limit int) ([]domain.Ingest
 }
 
 func (r *Repository) ListTemplates(ctx context.Context) ([]domain.Template, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, generator, body, created_at, updated_at FROM templates ORDER BY name`)
+	rows, err := r.rd().QueryContext(ctx, `SELECT id, name, generator, body, created_at, updated_at FROM templates ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +606,7 @@ func (r *Repository) ListTemplates(ctx context.Context) ([]domain.Template, erro
 }
 
 func (r *Repository) GetTemplate(ctx context.Context, name string) (domain.Template, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, generator, body, created_at, updated_at FROM templates WHERE name = ?`, name)
+	row := r.rd().QueryRowContext(ctx, `SELECT id, name, generator, body, created_at, updated_at FROM templates WHERE name = ?`, name)
 	tpl, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Template{}, ErrNotFound

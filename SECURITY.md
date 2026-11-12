@@ -27,28 +27,30 @@ disclosure; response times are best effort.
 ## Deployment boundary
 
 `loom serve` hosts the HTTP API, the embedded Sysop UI and a `/mcp` endpoint on
-one listener. Loopback works without a token, with loopback Host checks against
-DNS rebinding. Non-loopback binds require `LOOM_API_TOKEN` or `-token`. With a
-token, every API/MCP request needs a bearer, apart from exact GET/HEAD health
-checks and preflights. The static UI is public; its API client prompts on 401
-and keeps the token in tab-scoped sessionStorage. The token grants the whole
-API, including compile jobs that may call a paid LLM.
+one listener, behind Substrate's auth guard in `enforce` mode. Every `/api/`
+request and `/mcp` needs a verified credential: a session cookie from first-run
+setup and sign-in, or an API key / minted token, holding the scope the route
+declares (`loom.read`, `loom.write`, `loom.mcp`). Only `/healthz` and the static
+UI are public. Cookie-authenticated writes need an `X-Requested-With` header and
+a same-origin `Origin`. The API serves only loopback `Host` names plus
+`loom.allowed_hosts` (DNS rebinding); forwarding headers are dropped unless a
+listed host arrives from a loopback peer with exactly one
+`X-Forwarded-Proto: https`.
 
-Tokenless loopback is a development default only; release deployments require LOOM_API_TOKEN or -token even on loopback.
-
-- Behind a reverse proxy, set a token. Without one, Loom answers only direct
-  loopback callers: a request carrying `Forwarded`, `X-Forwarded-*` or
-  `X-Real-IP` is refused, because a proxy can rewrite `Host` (and `Origin`) and
-  make a remote caller look local. A proxy that strips those headers removes the
-  only evidence Loom has, so a proxied deployment must authenticate with the
-  bearer token rather than rely on the loopback default.
-- Supply the Docker token at runtime; never bake it into the image.
-- Browser Origins must be loopback or explicitly allowed by `LOOM_CORS_ORIGINS`
-  or `-cors-origin`; requests without Origin work for CLI clients.
+- Behind a reverse proxy, run a local TLS proxy on the same host, list the public
+  name in `loom.allowed_hosts` and set `identity.trusted_proxy`.
+- Compile jobs may call a paid LLM: keep the Anthropic key behind a secret
+  reference (`loom.llm_api_key_ref`), never in config, and give keys the scopes
+  they need.
 - Loom provides no TLS and no rate limiting.
-- `loom mcp` (stdio) trusts whatever process launched it.
-- The MCP result cache keys on caller ID and never caches under the `"default"`
-  caller; report any path that lets one caller read another's cached results.
+- `loom mcp` (stdio) needs a key (`mcp.stdio_token_file`) holding `loom.mcp`.
+  The local commands (`loom compile`, `pages`, ...) open the database file and
+  trust whoever can open it.
+- MCP tools are authorized per tool: read tools need `loom.read`, the rest
+  `loom.write`, on top of `loom.mcp`.
+- The MCP result cache keys on the verified principal and never caches for a
+  call without one; report any path that lets one caller read another's cached
+  results.
 
 ## Data at rest
 
@@ -65,9 +67,10 @@ The deterministic compile path makes no network calls. With
 body to Anthropic. A baseline set of secret-shaped patterns (API keys, AWS
 keys, bearer tokens, GitHub tokens, JWTs, PEM blocks) plus any configured
 `redact_patterns` are redacted before sending; this is best effort, not a
-guarantee. Keep `ANTHROPIC_API_KEY` in the process environment, never in
-committed config. Optional OpenTelemetry export is off unless
-`LOOM_OTEL_ENABLED` is set.
+guarantee. Set the key as a secret reference, `loom.llm_api_key_ref`
+(`keychain://`, `file://`, `op://`, or `env://ANTHROPIC_API_KEY`), never the key
+itself in committed config. Optional OpenTelemetry export is off unless
+`loom.otel_enabled` is set.
 
 ## Current security limitations
 

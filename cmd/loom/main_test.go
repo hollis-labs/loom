@@ -2,41 +2,16 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/hollis-labs/loom/internal/directivex"
+	"github.com/hollis-labs/loom/internal/settings"
 )
-
-func TestDefaultExportDirUsesConfigExportRoot(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	root := filepath.Join(home, "loom-root")
-	t.Setenv("LOOM_TEST_ROOT", root)
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(`
-paths:
-  export_dir: ${LOOM_TEST_ROOT}/exports
-`), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	got, err := defaultExportDir(nil, "Team Wiki")
-	if err != nil {
-		t.Fatalf("defaultExportDir: %v", err)
-	}
-	want := filepath.Join(root, "exports", "team-wiki")
-	if got != want {
-		t.Fatalf("default export dir = %q, want %q", got, want)
-	}
-}
 
 func TestSplitAppArgs(t *testing.T) {
 	cmdArgs, appArgs, err := splitAppArgs([]string{"list", "--db", "/tmp/loom.db", "-limit", "5", "--workspace=team", "--no-project"})
@@ -143,27 +118,13 @@ func TestDirectivesCLIParsesFromReader(t *testing.T) {
 	}
 }
 
-func TestConfiguredIngestFiltersUsesConfigAndExplicitOverrides(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(`
-filters:
-  redact_patterns: ["secret=\\w+"]
-  git_exclude_paths: ["node_modules", ".git"]
-`), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+func TestIngestFiltersUseSettingsAndExplicitOverrides(t *testing.T) {
+	l := &loom{settings: settings.Settings{
+		RedactPatterns: []string{`secret=\w+`},
+		GitExclude:     []string{"node_modules", ".git"},
+	}}
 
-	excludes, redactions, err := configuredIngestFilters(nil, nil, nil)
-	if err != nil {
-		t.Fatalf("configuredIngestFilters: %v", err)
-	}
+	excludes, redactions := l.ingestFilters(nil, nil)
 	if !reflect.DeepEqual(excludes, []string{"node_modules", ".git"}) {
 		t.Fatalf("excludes = %+v", excludes)
 	}
@@ -171,24 +132,11 @@ filters:
 		t.Fatalf("redactions = %+v", redactions)
 	}
 
-	excludes, redactions, err = configuredIngestFilters(nil, []string{"vendor"}, []string{"token"})
-	if err != nil {
-		t.Fatalf("configuredIngestFilters explicit: %v", err)
-	}
+	excludes, redactions = l.ingestFilters([]string{"vendor"}, []string{"token"})
 	if !reflect.DeepEqual(excludes, []string{"vendor"}) {
 		t.Fatalf("explicit excludes = %+v", excludes)
 	}
 	if !reflect.DeepEqual(redactions, []string{"token"}) {
 		t.Fatalf("explicit redactions = %+v", redactions)
-	}
-}
-
-func TestServeRefusesDockerBindWithoutToken(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("LOOM_API_TOKEN", "")
-	t.Chdir(t.TempDir())
-	err := serve(context.Background(), []string{"-project=false", "-addr=:8080"})
-	if err == nil || !strings.Contains(err.Error(), "refusing to listen") {
-		t.Fatalf("serve Docker bind = %v", err)
 	}
 }

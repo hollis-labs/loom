@@ -1,0 +1,19 @@
+import { type ReactNode, useId } from "react"
+
+export function Field({ label, children }: { label: string; children: (id: string) => ReactNode }) {
+  const id = useId()
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      {children(id)}
+    </div>
+  )
+}
+
+export function Notice({ error }: { error?: string }) {
+  return error ? (
+    <p className="text-danger" role="alert">
+      {error}
+    </p>
+  ) : null
+}

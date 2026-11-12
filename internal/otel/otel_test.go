@@ -5,40 +5,6 @@ import (
 	"testing"
 )
 
-func TestEnabledFromEnv(t *testing.T) {
-	t.Setenv("LOOM_OTEL_ENABLED", "")
-	t.Setenv("OTEL_ENABLED", "")
-	if EnabledFromEnv() {
-		t.Fatalf("EnabledFromEnv = true with no env")
-	}
-	t.Setenv("OTEL_ENABLED", "true")
-	if !EnabledFromEnv() {
-		t.Fatalf("EnabledFromEnv = false with OTEL_ENABLED=true")
-	}
-	t.Setenv("LOOM_OTEL_ENABLED", "1")
-	t.Setenv("OTEL_ENABLED", "")
-	if !EnabledFromEnv() {
-		t.Fatalf("EnabledFromEnv = false with LOOM_OTEL_ENABLED=1")
-	}
-}
-
-func TestMetricsEnabledFromEnv(t *testing.T) {
-	t.Setenv("LOOM_OTEL_METRICS_ENABLED", "")
-	t.Setenv("OTEL_METRICS_ENABLED", "")
-	if MetricsEnabledFromEnv() {
-		t.Fatalf("MetricsEnabledFromEnv = true with no env")
-	}
-	t.Setenv("OTEL_METRICS_ENABLED", "yes")
-	if !MetricsEnabledFromEnv() {
-		t.Fatalf("MetricsEnabledFromEnv = false with OTEL_METRICS_ENABLED=yes")
-	}
-	t.Setenv("LOOM_OTEL_METRICS_ENABLED", "on")
-	t.Setenv("OTEL_METRICS_ENABLED", "")
-	if !MetricsEnabledFromEnv() {
-		t.Fatalf("MetricsEnabledFromEnv = false with LOOM_OTEL_METRICS_ENABLED=on")
-	}
-}
-
 func TestInitDisabledIsNoop(t *testing.T) {
 	shutdown, err := Init(context.Background(), Config{Enabled: false})
 	if err != nil {

@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"path/filepath"
@@ -10,40 +11,22 @@ import (
 
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 	"github.com/hollis-labs/loom/internal/wiki"
 )
 
 func openRepo(t *testing.T) *storage.Repository {
 	t.Helper()
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(context.Background(), filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if err := storage.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("second migrate: %v", err)
-	}
 	return storage.NewRepository(db)
 }
 
-func TestMigrateSeedsNaniteIdempotently(t *testing.T) {
+func TestMigrationSeedsNanite(t *testing.T) {
 	repo := openRepo(t)
-	applied, err := storage.AppliedMigrations(context.Background(), repo.DB())
-	if err != nil {
-		t.Fatalf("AppliedMigrations: %v", err)
-	}
-	wantApplied := []string{"001_wiki_core", "002_compile_jobs", "003_directives_templates", "004_ingest_ledger", "005_default_template_body", "006_wiki_bundle_page_okf_fields", "007_wiki_links_redesign", "008_wiki_verifications_actor", "009_wiki_result_cache"}
-	if len(applied) != len(wantApplied) {
-		t.Fatalf("applied migrations = %+v, want %+v", applied, wantApplied)
-	}
-	for i := range wantApplied {
-		if applied[i] != wantApplied[i] {
-			t.Fatalf("applied migrations = %+v, want %+v", applied, wantApplied)
-		}
-	}
 	bundles, err := repo.ListBundles(context.Background())
 	if err != nil {
 		t.Fatalf("ListBundles: %v", err)
@@ -238,21 +221,21 @@ func TestStatsCountsRepositoryObjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBundle: %v", err)
 	}
-	if _, err := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "stats", Title: "Stats", Summary: "summary", Body: "# Stats\n\nSee [Runtime](runtime).", Source: "test"}); err != nil {
-		t.Fatalf("UpsertPage: %v", err)
+	if _, err2 := repo.UpsertPage(ctx, domain.Page{BundleID: b.ID, Slug: "stats", Title: "Stats", Summary: "summary", Body: "# Stats\n\nSee [Runtime](runtime).", Source: "test"}); err2 != nil {
+		t.Fatalf("UpsertPage: %v", err2)
 	}
 	job, err := repo.CreateJob(ctx, b.ID, "wiki_page", "# Stats")
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := repo.UpdateJob(ctx, job.ID, "completed", "{}", ""); err != nil {
-		t.Fatalf("UpdateJob: %v", err)
+	if err2 := repo.UpdateJob(ctx, job.ID, "completed", "{}", ""); err2 != nil {
+		t.Fatalf("UpdateJob: %v", err2)
 	}
-	if _, err := repo.InsertDirective(ctx, "hash", "test", "note", "Stats", 1); err != nil {
-		t.Fatalf("InsertDirective: %v", err)
+	if _, err2 := repo.InsertDirective(ctx, "hash", "test", "note", "Stats", 1); err2 != nil {
+		t.Fatalf("InsertDirective: %v", err2)
 	}
-	if _, err := repo.InsertIngest(ctx, "ingest", "text", "stats", "content"); err != nil {
-		t.Fatalf("InsertIngest: %v", err)
+	if _, err2 := repo.InsertIngest(ctx, "ingest", "text", "stats", "content"); err2 != nil {
+		t.Fatalf("InsertIngest: %v", err2)
 	}
 	stats, err := repo.Stats(ctx)
 	if err != nil {
@@ -584,8 +567,8 @@ func TestIngestLedgerIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := repo.AttachIngestJob(ctx, "hash-a", job.ID); err != nil {
-		t.Fatalf("AttachIngestJob: %v", err)
+	if err2 := repo.AttachIngestJob(ctx, "hash-a", job.ID); err2 != nil {
+		t.Fatalf("AttachIngestJob: %v", err2)
 	}
 	entry, err := repo.GetIngest(ctx, "hash-a")
 	if err != nil {
@@ -607,8 +590,8 @@ func TestCompileEventsListInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := repo.AddEvent(ctx, job.ID, "running", "started"); err != nil {
-		t.Fatalf("AddEvent: %v", err)
+	if err2 := repo.AddEvent(ctx, job.ID, "running", "started"); err2 != nil {
+		t.Fatalf("AddEvent: %v", err2)
 	}
 	events, err := repo.ListEvents(ctx, job.ID)
 	if err != nil {
@@ -638,8 +621,8 @@ func TestListJobsFiltersByBundleAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob second: %v", err)
 	}
-	if err := repo.UpdateJob(ctx, second.ID, "completed", "{}", ""); err != nil {
-		t.Fatalf("UpdateJob: %v", err)
+	if err2 := repo.UpdateJob(ctx, second.ID, "completed", "{}", ""); err2 != nil {
+		t.Fatalf("UpdateJob: %v", err2)
 	}
 	jobs, err := repo.ListJobs(ctx, storage.JobFilter{BundleID: nanite.ID, Limit: 10})
 	if err != nil {
@@ -680,5 +663,51 @@ func TestTemplateCRUD(t *testing.T) {
 	}
 	if len(templates) != 2 {
 		t.Fatalf("templates = %+v, want seeded plus upserted", templates)
+	}
+}
+
+func TestReopenKeepsSeedOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "loom.db")
+	for i := 0; i < 2; i++ {
+		db, err := storagetest.Open(context.Background(), path)
+		if err != nil {
+			t.Fatalf("open %d: %v", i, err)
+		}
+		bundles, err := storage.NewRepository(db).ListBundles(context.Background())
+		if err != nil {
+			t.Fatalf("ListBundles %d: %v", i, err)
+		}
+		if len(bundles) != 1 {
+			t.Fatalf("open %d: bundles = %+v, want the single seeded bundle", i, bundles)
+		}
+		_ = db.Close()
+	}
+}
+
+func TestRefuseLegacy(t *testing.T) {
+	dir := t.TempDir()
+	if err := storage.RefuseLegacy(filepath.Join(dir, "missing.db")); err != nil {
+		t.Fatalf("missing file: %v", err)
+	}
+	fresh := filepath.Join(dir, "fresh.db")
+	db, err := storagetest.Open(context.Background(), fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if err2 := storage.RefuseLegacy(fresh); err2 != nil {
+		t.Fatalf("current layout refused: %v", err2)
+	}
+	old := filepath.Join(dir, "old.db")
+	odb, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := odb.Exec(`CREATE TABLE schema_version (version TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = odb.Close()
+	if err := storage.RefuseLegacy(old); !errors.Is(err, storage.ErrLegacyLayout) {
+		t.Fatalf("old layout: err = %v, want ErrLegacyLayout", err)
 	}
 }

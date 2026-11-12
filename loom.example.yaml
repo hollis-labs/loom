@@ -1,0 +1,21 @@
+# Example SUBSTRATE_CONFIG file for Loom: point the environment variable at a copy of this.
+# Every key is optional. The merge is deep: maps merge, scalars and lists replace, null removes a key.
+httphost:
+  addr: "127.0.0.1:8080"
+# Needed only when `loom mcp` (stdio) is used: a file holding an API key with scope loom.mcp.
+mcp:
+  stdio_token_file: ""
+loom:
+  # export_dir: ""                        # default <data>/exports
+  # redact_patterns: []
+  # git_exclude_paths: [.git, node_modules, dist]
+  # allowed_hosts: []                     # names served besides loopback, behind a local TLS proxy
+  # llm_model: claude-sonnet-4-6
+  # llm_api_key_ref: keychain://anthropic/loom   # empty: LLM generation off
+  # otel_enabled: false
+  # otel_metrics: false
+  # otel_endpoint: ""
+# DEVELOPMENT ONLY: running the Vite dev server against this backend needs its origin allowed for cookie
+# writes (otherwise 403 bad_origin). Never put this in a deployed config.
+# identity:
+#   allowed_origins: ["http://localhost:5173"]

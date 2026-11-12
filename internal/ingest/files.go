@@ -59,7 +59,7 @@ func (s FileSource) Items(ctx context.Context) ([]Item, error) {
 	}
 	items := make([]Item, 0, len(files))
 	for _, file := range files {
-		data, err := os.ReadFile(file)
+		data, err := os.ReadFile(file) //nolint:gosec // file list comes from the operator-configured ingest sources
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", file, err)
 		}
@@ -88,7 +88,7 @@ func Hash(s string) string {
 func collectPath(ctx context.Context, root string, excludes, suffixes []string, out *[]string) error {
 	info, err := os.Stat(root)
 	if err != nil {
-		return fmt.Errorf("%w: stat %s: %v", ErrInvalid, root, err)
+		return fmt.Errorf("%w: stat %s: %w", ErrInvalid, root, err)
 	}
 	if !info.IsDir() {
 		if includeFile(root, excludes, suffixes) {
@@ -157,7 +157,7 @@ func compileRedactors(patterns []string) ([]*regexp.Regexp, error) {
 		}
 		re, err := regexp.Compile(pattern)
 		if err != nil {
-			return nil, fmt.Errorf("%w: compile redaction pattern %q: %v", ErrInvalid, pattern, err)
+			return nil, fmt.Errorf("%w: compile redaction pattern %q: %w", ErrInvalid, pattern, err)
 		}
 		out = append(out, re)
 	}

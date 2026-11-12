@@ -1,4 +1,6 @@
-.PHONY: all build run install ui-build ui-dev test vet lint clean
+.PHONY: all build run install ui-build ui-dev test vet lint pins scan generate clean
+
+SUBSTRATE := go run github.com/hollis-labs/substrate/cmd/substrate
 
 # Build the frontend then the Go binary — a production binary with the
 # Sysop UI embedded.
@@ -6,20 +8,21 @@ all: ui-build build
 
 # Build the Sysop UI into internal/webui/dist (the Go embed directory).
 ui-build:
-	cd frontend && npm install && npm run build
+	cd frontend && npm ci && npm run build
 
 # Run the Sysop UI dev server with hot reload. Proxies /api to the Go
-# server on :8080 — run `make run` in another shell. The dev UI is served
+# server (default 127.0.0.1:8080) — run `make run` in another shell. The dev UI is served
 # at the root path (see `base` in frontend/vite.config.ts).
 ui-dev:
-	cd frontend && npm install && npm run dev
+	cd frontend && npm ci && npm run dev
 
 # Build the Go binary. Embeds whatever is in internal/webui/dist; run
 # `make ui-build` first for a binary that serves the real UI.
 build:
 	go build -o loom ./cmd/loom
 
-# Build and run the server.
+# Build and run the server. Data lives in ./.loom (project-local), or where -db/-workspace/--no-project
+# point; see docs/architecture.md.
 run: build
 	./loom
 
@@ -29,16 +32,25 @@ install: ui-build
 	go install ./cmd/loom
 
 test:
-	go test ./...
+	go test -race ./...
 
 vet:
 	go vet ./...
 
 lint: vet
-	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run; else echo "golangci-lint not installed; skipped"; fi
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "staticcheck not installed; skipped"; fi
-	@if command -v errcheck >/dev/null 2>&1; then errcheck -ignoretests ./...; else echo "errcheck not installed; skipped"; fi
-	@if command -v govulncheck >/dev/null 2>&1; then govulncheck ./...; else echo "govulncheck not installed; skipped"; fi
+	golangci-lint run
+
+# The go.mod pins must match the Substrate BOM; edit the BOM (in Substrate), never go.mod.
+pins:
+	$(SUBSTRATE) pins check --app .
+
+scan:
+	# Tree only: the history gate returns after the program-wide history pass.
+	python3 scripts/scan-public --tree
+
+# Regenerate the wiring file after editing cmd/loom/substrate.yaml.
+generate:
+	$(SUBSTRATE) generate -f cmd/loom/substrate.yaml
 
 # Remove build artifacts. Keeps internal/webui/dist/.gitkeep so the
 # //go:embed directive still compiles.

@@ -1,37 +1,120 @@
-import { useState } from 'react'
-import { Activity, Braces, Briefcase, FileDown, Files, ScrollText } from 'lucide-react'
-import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-labs/sysop-ui'
-import { DashboardPage } from './pages/dashboard'
+import { ManifestShell, type PageComponent } from "@hollis-labs/app-shell"
+import { Button } from "@hollis-labs/design-components"
+import { Braces, Briefcase, FileDown, Files, LogOut, ScrollText } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { ApiError, request, UNAUTHORIZED_EVENT } from "./api/request"
+import { Entry } from "./identity/entry"
+import { Notice } from "./identity/forms"
+import { type Session, SessionContext } from "./identity/session"
+import { SignOutPage } from "./identity/signout"
+import { manifest } from "./manifest"
+import { BundlesPage } from "./pages/bundles"
+import { DirectivesPage } from "./pages/directives"
+import { ExportsPage } from "./pages/exports"
+import { JobsPage } from "./pages/jobs"
+import { PagesPage } from "./pages/pages"
 
-/**
- * App shell — the icon nav rail on the left, a pinned page header, and the
- * active page. Add pages by extending `nav` and the `route` switch below.
- */
+// Kit icon names used by the contributions, resolved by the shell.
+const icons = {
+  briefcase: Briefcase,
+  files: Files,
+  "scroll-text": ScrollText,
+  "file-down": FileDown,
+  braces: Braces,
+  "log-out": LogOut,
+}
+
+const pages: Record<string, PageComponent> = {
+  bundles: () => <BundlesPage />,
+  pages: () => <PagesPage />,
+  jobs: () => <JobsPage />,
+  exports: () => <ExportsPage />,
+  directives: () => <DirectivesPage />,
+  "sign-out": () => <SignOutPage />,
+}
+
+function usePath() {
+  const [path, setPath] = useState(window.location.pathname)
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname)
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
+  }, [])
+  const navigate = useCallback((to: string) => {
+    if (to !== window.location.pathname) window.history.pushState(null, "", to)
+    setPath(to)
+  }, [])
+  return [path, navigate] as const
+}
+
 export function App() {
-  const [route, setRoute] = useState('bundles')
+  // null: not signed in; otherwise the signed-in person's display name.
+  const [name, setName] = useState<string | null>(null)
+  const [setup, setSetup] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [path, navigate] = usePath()
+  const signedOut = useCallback(() => {
+    setName(null)
+    setSetup(false)
+    navigate("/")
+  }, [navigate])
+  useEffect(() => {
+    async function load() {
+      try {
+        const state = await request<{ setup_required: boolean }>("setup")
+        setSetup(state.setup_required)
+        if (!state.setup_required) {
+          try {
+            const me = await request<{ username: string; display_name?: string }>(
+              "identity/profile",
+            )
+            setName(me.display_name || me.username)
+          } catch (e) {
+            if (!(e instanceof ApiError && e.status === 401)) throw e
+          }
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not reach Loom.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    void load()
+  }, [])
+  useEffect(() => {
+    window.addEventListener(UNAUTHORIZED_EVENT, signedOut)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, signedOut)
+  }, [signedOut])
+  const session = useMemo<Session | null>(
+    () => (name === null ? null : { name, signedOut }),
+    [name, signedOut],
+  )
 
-  const nav: NavRailItem[] = [
-    { key: 'bundles', label: 'Bundles', icon: <Briefcase className="h-4 w-4" />, active: route === 'bundles', onSelect: () => setRoute('bundles') },
-    { key: 'pages', label: 'Pages', icon: <Files className="h-4 w-4" />, active: route === 'pages', onSelect: () => setRoute('pages') },
-    { key: 'jobs', label: 'Compile Jobs', icon: <ScrollText className="h-4 w-4" />, active: route === 'jobs', onSelect: () => setRoute('jobs') },
-    { key: 'exports', label: 'Exports', icon: <FileDown className="h-4 w-4" />, active: route === 'exports', onSelect: () => setRoute('exports') },
-    { key: 'directives', label: 'Directives', icon: <Braces className="h-4 w-4" />, active: route === 'directives', onSelect: () => setRoute('directives') },
-  ]
-
+  if (loading)
+    return (
+      <main className="entry-loading" role="status">
+        Opening Loom…
+      </main>
+    )
+  if (error && !session)
+    return (
+      <main className="entry-loading">
+        <Notice error={error} />
+        <Button onClick={() => window.location.reload()}>Try again</Button>
+      </main>
+    )
+  if (!session) return <Entry setup={setup} onReady={setName} />
   return (
-    <div className="flex h-screen bg-bg text-text">
-      <NavRail
-        items={nav}
-        logo={<Activity className="h-4 w-4" />}
-        logoLabel="Loom"
-        footerExtra={<ThemeSwitcher />}
+    <SessionContext.Provider value={session}>
+      <ManifestShell
+        manifest={manifest}
+        apiBase="/api"
+        path={path}
+        onNavigate={navigate}
+        pages={pages}
+        icons={icons}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <PageHeader title={nav.find((item) => item.key === route)?.label ?? 'Loom'} />
-        <main className="min-h-0 flex-1 overflow-auto">
-          <DashboardPage view={route as 'bundles' | 'pages' | 'jobs' | 'exports' | 'directives'} />
-        </main>
-      </div>
-    </div>
+    </SessionContext.Provider>
   )
 }

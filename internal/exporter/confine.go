@@ -14,15 +14,15 @@ import (
 // os.Root enforces containment during resolution, including concurrent symlink
 // changes; a lexical prefix check alone cannot provide that guarantee.
 func openExportDir(base, dir, bundle string) (*os.Root, string, error) {
-	refuse := func(err error) (*os.Root, string, error) {
-		return nil, "", fmt.Errorf("%w: export confined to paths.export_dir: %v", storage.ErrInvalid, err)
+	refuse := func(err error) error {
+		return fmt.Errorf("%w: export confined to paths.export_dir: %w", storage.ErrInvalid, err)
 	}
 	if strings.TrimSpace(base) == "" {
-		return refuse(fmt.Errorf("no export root configured"))
+		return nil, "", refuse(fmt.Errorf("no export root configured"))
 	}
 	base, err := filepath.Abs(base)
 	if err != nil {
-		return refuse(err)
+		return nil, "", refuse(err)
 	}
 	if dir == "" {
 		dir = bundle
@@ -31,32 +31,32 @@ func openExportDir(base, dir, bundle string) (*os.Root, string, error) {
 	if filepath.IsAbs(dir) {
 		rel, err = filepath.Rel(base, dir)
 		if err != nil {
-			return refuse(err)
+			return nil, "", refuse(err)
 		}
 	}
 	rel = filepath.Clean(rel)
 	if rel != "." && !filepath.IsLocal(rel) {
-		return refuse(fmt.Errorf("directory %q escapes export root", dir))
+		return nil, "", refuse(fmt.Errorf("directory %q escapes export root", dir))
 	}
 	// Only this operator-supplied base may be created outside an existing root.
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		return refuse(err)
+	if err = os.MkdirAll(base, 0o755); err != nil { //nolint:gosec // export root is operator-owned; 0o755 so export consumers can read it
+		return nil, "", refuse(err)
 	}
 	canonical, err := filepath.EvalSymlinks(base)
 	if err != nil {
-		return refuse(err)
+		return nil, "", refuse(err)
 	}
 	root, err := os.OpenRoot(base)
 	if err != nil {
-		return refuse(err)
+		return nil, "", refuse(err)
 	}
-	defer root.Close()
-	if err := root.MkdirAll(rel, 0o755); err != nil {
-		return refuse(err)
+	defer func() { _ = root.Close() }()
+	if err = root.MkdirAll(rel, 0o755); err != nil {
+		return nil, "", refuse(err)
 	}
 	child, err := root.OpenRoot(rel)
 	if err != nil {
-		return refuse(err)
+		return nil, "", refuse(err)
 	}
 	return child, filepath.Join(canonical, rel), nil
 }
@@ -77,7 +77,7 @@ func writeArtifact(root *os.Root, name string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer root.Remove(tmp)
+	defer func() { _ = root.Remove(tmp) }()
 	_, err = file.Write(data)
 	closeErr := file.Close()
 	if err != nil {

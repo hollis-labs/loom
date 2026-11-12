@@ -2,7 +2,6 @@ package otel
 
 import (
 	"context"
-	"os"
 	"strings"
 	"time"
 
@@ -22,24 +21,6 @@ type Config struct {
 type Runtime struct {
 	Shutdown func()
 	Recorder *hotel.Recorder
-}
-
-func EnabledFromEnv() bool {
-	for _, key := range []string{"LOOM_OTEL_ENABLED", "OTEL_ENABLED"} {
-		if enabled(os.Getenv(key)) {
-			return true
-		}
-	}
-	return false
-}
-
-func MetricsEnabledFromEnv() bool {
-	for _, key := range []string{"LOOM_OTEL_METRICS_ENABLED", "OTEL_METRICS_ENABLED"} {
-		if enabled(os.Getenv(key)) {
-			return true
-		}
-	}
-	return false
 }
 
 func Init(ctx context.Context, cfg Config) (func(), error) {
@@ -96,13 +77,4 @@ func InitRuntime(ctx context.Context, cfg Config) (Runtime, error) {
 		runtime.Recorder = recorder
 	}
 	return runtime, nil
-}
-
-func enabled(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }

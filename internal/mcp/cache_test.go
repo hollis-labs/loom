@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
-	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 // setupCacheTest opens a fresh migrated temp-file SQLite DB (so the real
@@ -20,14 +20,11 @@ import (
 func setupCacheTest(t *testing.T, cfg ResultCacheConfig) (*ResultCache, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	return NewResultCache(db, cfg), db
 }
 
@@ -146,8 +143,8 @@ func TestResultCache_Purge(t *testing.T) {
 	}
 
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	if _, err := db.Exec(`UPDATE wiki_result_cache SET expires_at = ? WHERE id = ?`, past, idExpired); err != nil {
-		t.Fatalf("force-expire: %v", err)
+	if _, err2 := db.Exec(`UPDATE wiki_result_cache SET expires_at = ? WHERE id = ?`, past, idExpired); err2 != nil {
+		t.Fatalf("force-expire: %v", err2)
 	}
 
 	n, err := cache.Purge()
@@ -216,12 +213,12 @@ func TestCacheListResult_NoCacheForDefaultCallerID(t *testing.T) {
 	items := []string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"}
 
 	// wiki_result_cache is a single shared SQLite table, not per-process
-	// memory: caching under the "default" sentinel every caller_id-omitting
-	// client falls back to would let one such client fetch/search another's
-	// cached data if it ever learned the resulting id, defeating per-caller
-	// isolation. cacheListResult must refuse to cache under that sentinel
-	// (and under an empty callerID), even when the result is large enough
-	// that a real caller_id would have triggered caching.
+	// memory: caching under the "default" sentinel every call without a
+	// verified principal falls back to would let one such caller fetch/search
+	// another's cached data if it ever learned the resulting id, defeating
+	// per-owner isolation. cacheListResult must refuse to cache under that
+	// sentinel (and under an empty owner), even when the result is large
+	// enough that a verified principal would have triggered caching.
 	for _, callerID := range []string{"default", ""} {
 		out := cacheListResult(cache, callerID, "test_list_tool", items, budget.Config{Limit: 10}, "")
 		if strings.Contains(out.Hint, "wiki_result://") {
@@ -229,10 +226,10 @@ func TestCacheListResult_NoCacheForDefaultCallerID(t *testing.T) {
 		}
 	}
 
-	// Confirm the threshold logic itself still works for a real caller_id -
+	// Confirm the threshold logic itself still works for a verified principal -
 	// this isn't a blanket "caching is broken" regression.
 	out := cacheListResult(cache, "caller-1", "test_list_tool", items, budget.Config{Limit: 10}, "")
 	if !strings.Contains(out.Hint, "wiki_result://") {
-		t.Fatalf("expected a cache pointer for a real caller_id, got: %s", out.Hint)
+		t.Fatalf("expected a cache pointer for a verified principal, got: %s", out.Hint)
 	}
 }

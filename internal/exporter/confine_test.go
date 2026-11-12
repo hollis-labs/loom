@@ -26,7 +26,7 @@ func TestExportDirectoryHandleSurvivesPathReplacement(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "index.md")); !os.IsNotExist(err) {
 		t.Fatalf("write escaped pinned directory: %v", err)
 	}
-	if data, err := os.ReadFile(filepath.Join(base, "moved", "index.md")); err != nil || string(data) != "export" {
+	if data, err := os.ReadFile(filepath.Join(base, "moved", "index.md")); err != nil || string(data) != "export" { //nolint:gosec // test fixture path under t.TempDir
 		t.Fatalf("pinned write: %q %v", data, err)
 	}
 	for _, name := range []string{"../escape.md", "subdir/file.md", "/absolute.md"} {
