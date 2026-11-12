@@ -31,6 +31,13 @@ var (
 	buildErr  error
 )
 
+// removeBuilt deletes the binary these tests built; TestMain calls it after the run.
+func removeBuilt() {
+	if builtBin != "" {
+		os.RemoveAll(filepath.Dir(builtBin)) //nolint:errcheck,gosec // best-effort temp cleanup
+	}
+}
+
 func loomBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
@@ -353,6 +360,14 @@ func raceStart(t *testing.T, h *host) (svc *exec.Cmd, svcLog, childLog string) {
 	h.writeConfig("") // no stdio token: the child ends with the token error once it has started
 	var wg sync.WaitGroup
 	start := make(chan struct{})
+	t.Cleanup(func() { // whatever path the test leaves by, no process outlives it
+		for _, c := range []*exec.Cmd{svc, kid} {
+			if c.Process != nil {
+				_ = c.Process.Kill()
+				_ = c.Wait()
+			}
+		}
+	})
 	for _, c := range []*exec.Cmd{svc, kid} {
 		wg.Add(1)
 		go func() {
