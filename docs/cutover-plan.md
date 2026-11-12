@@ -85,28 +85,41 @@ promise. Nothing in this plan may be the first run to find out.
 
 Downtime: the service is stopped for the migration and restart, expected **under a minute** (the migration took
 under 20 ms on the copy; the rest is stop, migrate, bootstrap, deploy and the first checks). The `loom_*` tools are
-unavailable to agents for longer, from step 2 until the end of section 2 (downtime table).
+unavailable to agents for longer in variant B (from the first reload until the end of section 2); in variant A they keep answering from the old file until the single hub reload, which is the only gap (downtime table).
 
 1. Write the new config file `~/.config/loom/loom.yaml` (the path the drop-in in `deploy.yaml` names, named by
    `SUBSTRATE_CONFIG`): `httphost.addr: "127.0.0.1:8092"`, `loom.llm_*` and `loom.otel_*` if the old environment had
    them (see the old-to-new table), `loom.allowed_hosts` if it sits behind a local TLS proxy, and
    nothing for the child (local trust, section 2). The unit change (no `--addr`, `SUBSTRATE_CONFIG` set) is the
    drop-in that `fleet-install` writes; nothing is handed to the owner of the service manager by hand.
-2. **Stop the Tether gateway's loom child, then the service.**
-   - The child is the Tether gateway's, not Loom's and not mine: **the driver stops it, on the Tether side**, through
-     the gateway's own configuration for the loom server (remove or disable the entry and reload the gateway; the
-     driver names the exact action). I do not touch the gateway.
-   - What agents see while it is stopped: the `loom_*` tools fail (or are absent from the gateway's tool list,
-     depending on how the entry is taken out); no other tool is affected and no data is lost.
-   - Confirm it is gone before going on: no `loom mcp` process is attached to the host's `main.db`
-     (`pgrep -af 'loom mcp'`). The migration also refuses if the file changed while it ran.
-   - Then stop the service: `systemctl --user stop loom`.
+2. **The old child and the service: two variants (the owner chooses; A is recommended).** The gateway entry for the
+   loom child changes only at a **Tether hub reload**, which restarts every gateway child and drops every agent
+   connection for the length of the restart. The child is the gateway's, not Loom's and not mine: the driver does
+   everything on the Tether side; I do not touch the gateway.
+   - **A, one reload (recommended).** The old child (old binary in memory, `main.db` open, idle) **stays up through the
+     whole window**; do not stop it. The driver tells agents not to write through the loom tools for the window.
+     The entry is replaced and the hub reloaded once, at the end (section 2, step 2). What this costs: a write
+     through the old child after the copy in step 4 lands in the old `main.db` and is not in `loom.db`
+     (hazard, below); the checksum in steps 4 and 2.2 catches it before anything is lost.
+   - **B, two reloads.** The driver disables the entry and reloads first (agents lose the loom tools from then on),
+     confirms `pgrep -af 'loom mcp'` shows nothing attached to the host's `main.db`, then the steps below as written,
+     then the entry is replaced and the hub reloaded a second time (section 2, step 2). No write can reach the old
+     file.
+   Then stop the service: `systemctl --user stop loom`. What agents see while the loom tools are down (B), or after
+   the service is stopped but the old child still serves (A): in A the old child keeps answering from the old
+   `main.db`, unchanged; in B the `loom_*` tools fail; no other tool is affected and no data is lost.
 3. Back up: copy `~/.local/share/loom/workspaces/default/` (`main.db` plus `-wal`/`-shm` are not needed once the
    service is stopped cleanly) to a dated directory.
 4. Extract the new binary from the release tarball into a scratch directory (it is not installed yet). As the service's
-   user, with its `HOME`, run `loom migrate-data --all`. Expect a JSON report per database with counts,
+   user, with its `HOME`, run **`loom --no-project migrate-data --all`** (the same `--no-project` as the service: without
+   it, from a directory inside a project tree, the project-local `.loom` is resolved and the command reports `no
+   workspace database found to migrate`; harmless, but not what was meant; the laptop section below is per checkout and
+   does not take the flag). Expect a JSON report per database with counts,
    `integrity_check: ok`, `foreign_key_check: ok`, `old_file: untouched`. This also creates `loom.db`, so neither
-   process ever starts on an empty file (see section 2, concurrent start).
+   process ever starts on an empty file (see section 2, concurrent start). **Variant A: run this as late as the order
+   allows (immediately before step 5) and record the checksum of the old file right after the copy:**
+   `sha256sum main.db main.db-wal main.db-shm` in `~/.local/share/loom/workspaces/default/` (every one that exists),
+   into a file next to the backup of step 3.
 5. **Offline identity bootstrap**, with the service still stopped, as the service's user with its `HOME`, the same
    binary and `SUBSTRATE_CONFIG`, and **the same `--no-project`** as the service (without it the commands work on a
    project-local `.loom`):
@@ -137,8 +150,27 @@ loom`); a migration that already ran is not reversed by either, the backup from 
 
 ## 2. The Tether gateway's child (server host)
 
-Today: `loom mcp --no-project -db …/main.db`. After the cutover the service and this child both open the **same**
-`loom.db`. PR #15 runs that topology with the real binary (service plus child, sandboxed home) and answers:
+Today: `loom mcp --no-project -db …/main.db`, launched by a bash wrapper that drops the XDG variables on the server
+host. After the cutover the service and the child both open the **same** `loom.db`. The gateway entry changes only at
+a hub reload (section 1, step 2 has the two variants). Two facts the sequence rests on, from a rehearsal on a scratch
+host (old binary built from the previous Loom, new from the cutover build, a 6 MB database; HOME only, no XDG):
+
+- **The old child can stay attached while the new binary migrates.** With the old `loom mcp --no-project -db main.db`
+  attached and idle, `loom --no-project migrate-data --all` passed (rc 0, 0.05 s, `integrity_check`/`foreign_key_check`
+  ok, `old_file: untouched`) and the old `main.db`, `-wal` and `-shm` were byte-identical afterwards; the only new
+  file was `loom.db`. The same with the old child reading continuously (119 calls, no errors).
+- **A write through the old child during the copy is refused, nothing is left behind**: `migrate: templates has 4700
+  rows in the old database and 4534 in the new one`, rc 1, no `loom.db`, no key. The old child was never blocked. **A
+  write after the copy is not caught by that check** (it is a different file): it stays in the old `main.db` and the
+  service never sees it. Hence the checksum.
+- **After the installer replaces the binary on disk** (copy, then rename over the path), the old child keeps running
+  and keeps answering reads from the old file.
+- **A new child started with the old arguments** (`mcp --no-project -db …/main.db`) against the new binary exits 1,
+  prints nothing on stdout, creates no file, and says on stderr: `loom: substrate: before-database hook: the database
+  uses the pre-Substrate Loom layout (…/main.db): run `loom migrate-data --from <old> --to <new>` and open the new
+  file. See docs/conversion-notes.md`. If the old child dies in the window, the daemon retries it with the old
+  arguments up to its restart limit; each attempt fails at start with that message, and the loom tools stay down
+  until the reload. Nothing else is affected.
 
 - **(a) Two directories, if the child keeps `-db`.** The service (no `-db`) keeps its identity signing key and
   secrets in the data directory (`~/.local/share/loom/`); a child launched with `-db …/workspaces/default/loom.db`
@@ -175,14 +207,23 @@ service and **no `-db`**. It then resolves the same data directory, the same sig
    step 1.5. Per-agent identity is the follow-up, Torque CW-20261112-0120. (The mechanism it would use exists today:
    one key for the child named in `mcp.stdio_token_file` in the shared config, which the service never reads; the
    owner chose not to use it now.)
-2. Change the launch config (Tether side, routed through the driver): `loom mcp --no-project`, environment
-   `SUBSTRATE_CONFIG=~/.config/loom/loom.yaml`, binary `~/.local/bin/loom`, no `-db`. Start it **after** step 1.7 has
-   passed (the service first, the child second; this also holds for every later release that carries a migration).
+2. **Change the gateway entry and reload the hub once (A) or the second time (B).** The new entry runs `loom mcp
+   --no-project`, binary `~/.local/bin/loom`, no `-db`, with `SUBSTRATE_CONFIG=~/.config/loom/loom.yaml` set inline in
+   the wrapper (the wrapper keeps dropping the XDG variables; the config file and the shared data directory are what
+   make the child resolve the service's files). Do it **after** step 1.8 has passed (the service first, the child
+   second; this also holds for every later release that carries a migration). **Variant A, immediately before the
+   reload:** recompute `sha256sum` of the old `main.db`, `-wal` and `-shm` and compare with the one recorded in step
+   1.4. **A difference stops the cutover before the reload**, with the old child still serving; resolve it by hand
+   (the data is one bundle and one template): find what was written, then either repeat the migration (move the
+   earlier `loom.db` aside first: `migrate-data` refuses to overwrite) or copy the rows over.
+   The config file lists, under `loom.allowed_hosts`, the two names the local TLS proxy forwards under, and
+   `identity.trusted_proxy` is set (the real names are added at cutover; none is in the repository).
 3. Verify: the gateway lists the 30 tool names unchanged, one `loom_status` call, one write and one read as an agent.
 4. The local principal is verified, so the result cache works for the child: a large list leaves a
    `wiki_result://` pointer and `loom_fetch_result` returns it (tested). SIGTERM stops the child cleanly (exit 0).
 
-**Rollback:** point the child back at the old binary and `main.db` (and `-db`), through the driver.
+**Rollback:** point the entry back at the old binary and `main.db` (and `-db`) and reload the hub, through the driver
+(variant A: if the reload has not happened, nothing was changed on the Tether side).
 
 ## 3. The laptop's project-local `.loom` directories
 
@@ -215,7 +256,7 @@ choice. An unmigrated checkout is not harmed by the new binary: `loom mcp` stops
 |---|---|
 | The served instance | under a minute (stop to healthy, estimate from the rehearsed migration time plus restart) |
 | The Tether child | one restart of the child |
-| **Loom tools unavailable to agents** (`loom_*` fail), sections 1 and 2 together | **about 10 minutes (estimate, not measured)**: from the child's stop (step 1.2) to the verified restart (step 2.3). The service part is the minute above; the rest is the bootstrap, deploy, first checks and the Tether-side launch change, which the driver applies. Preparing that change in advance, to apply the moment step 1.7 passes, brings it nearer 5 minutes. |
+| **Loom tools unavailable to agents** (`loom_*` fail), sections 1 and 2 together | **about 10 minutes (estimate, not measured)**: from the loom tools going away (variant B: the first reload; variant A: the hub reload in step 2.2) to the verified restart (step 2.3). The service part is the minute above; the rest is the bootstrap, deploy, first checks and the Tether-side launch change, which the driver applies. Preparing that change in advance, to apply the moment step 1.7 passes, brings it nearer 5 minutes. |
 | Each laptop checkout | the time its sessions are closed, a few minutes |
 
 ## Open items
@@ -226,6 +267,10 @@ choice. An unmigrated checkout is not harmed by the new binary: `loom mcp` stops
   the proof that the tarball and the UI check work there.
 - Installer behaviour the driver verifies with a `--dry-run` at cutover (the plan does not run it): the
   `loom.pre-fleet-install` name, and whether it reloads systemd (the plan checks it either way).
+- `/mcp` through a proxy name: on a scratch service with `loom.allowed_hosts` set, `identity.trusted_proxy` and a
+  loopback peer sending `X-Forwarded-Proto: https`, `/mcp` answers `403 Forbidden: invalid Host header` (the MCP SDK's
+  own localhost protection; the application's Host check passes). A loopback `Host` answers 200. Reported to the
+  driver and the Framework Agent; not worked around here.
 - Simultaneous starts of two processes on one file can lose a race in one of them: a framework limit
   (`docs/conversion-notes.md`, gap 9), worked around by the order, not fixed.
 
