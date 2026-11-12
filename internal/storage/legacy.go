@@ -150,8 +150,21 @@ func hasLegacyLayout(path string) (bool, error) {
 }
 
 func openReadOnly(path string) (*sql.DB, error) {
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
-	return sql.Open("sqlite", u.String())
+	return sql.Open("sqlite", readOnlyURI(path))
+}
+
+// readOnlyURI is how the old file is opened, to judge it and to copy from it. mode=ro alone is
+// not enough: on a WAL-mode file SQLite still creates a -shm (and -wal) beside it, and the old
+// file must be left exactly as found. When there is no WAL content to read (no -wal, or an empty
+// one, which is what a cleanly stopped writer leaves) the file is opened immutable, which takes
+// no locks and writes nothing; when a -wal with content exists it is opened mode=ro so that
+// content is still read (the files are already there, so none is created).
+func readOnlyURI(path string) string {
+	q := "mode=ro"
+	if fi, err := os.Stat(path + "-wal"); err != nil || fi.Size() == 0 {
+		q = "mode=ro&immutable=1"
+	}
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: q}).String()
 }
 
 func requireFinalLegacySchema(ctx context.Context, from string) error {
@@ -215,8 +228,7 @@ func copyTables(ctx context.Context, db *sql.DB, from string) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	u := url.URL{Scheme: "file", Path: from, RawQuery: "mode=ro"}
-	if _, err = conn.ExecContext(ctx, `ATTACH DATABASE ? AS old`, u.String()); err != nil {
+	if _, err = conn.ExecContext(ctx, `ATTACH DATABASE ? AS old`, readOnlyURI(from)); err != nil {
 		return fmt.Errorf("migrate: attach old database: %w", err)
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), `DETACH DATABASE old`) }()

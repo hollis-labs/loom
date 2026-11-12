@@ -3,7 +3,6 @@
 package storage
 
 import (
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -33,17 +32,13 @@ func RefuseLegacy(path string) error {
 	} else if err != nil {
 		return err
 	}
-	// Only reads: the guard never changes the file it is judging.
-	db, err := sql.Open("sqlite", path)
+	// Read-only (mode=ro): the guard never changes, and never adds a -wal or -shm file beside,
+	// the file it is judging.
+	legacy, err := hasLegacyLayout(path)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
-	var legacy int
-	if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_version'").Scan(&legacy); err != nil {
-		return fmt.Errorf("inspect %s: %w", path, err)
-	}
-	if legacy > 0 {
+	if legacy {
 		return fmt.Errorf("%w (%s): run `loom migrate-data --from <old> --to <new>` and open the new file. See docs/conversion-notes.md",
 			ErrLegacyLayout, path)
 	}

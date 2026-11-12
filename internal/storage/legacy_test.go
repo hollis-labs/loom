@@ -2,8 +2,10 @@ package storage_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,5 +239,118 @@ func TestLegacySchemaHasNoSequencesOrTriggers(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("the old schema has %d sequence/trigger/view/virtual objects", n)
+	}
+}
+
+// snapshot is the directory listing (names and sizes) plus the sha256 of one file.
+func snapshot(t *testing.T, dir, file string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		info, ierr := e.Info()
+		if ierr != nil {
+			t.Fatal(ierr)
+		}
+		b.WriteString(e.Name() + ":" + fmt.Sprint(info.Size()) + "\n")
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // test path
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String() + fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+// The guards read the old file to judge it. They must not change it or add a -wal or -shm
+// beside it, including when the file is in WAL mode.
+func TestLegacyGuardsLeaveTheOldFileAlone(t *testing.T) {
+	for _, journal := range []string{"DELETE", "WAL"} {
+		t.Run(journal, func(t *testing.T) {
+			dir := t.TempDir()
+			old := filepath.Join(dir, "main.db")
+			legacyDB(t, old, "")
+			db, err := sql.Open("sqlite", old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`PRAGMA journal_mode=` + journal); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshot(t, dir, old)
+			if err = storage.RefuseLegacy(old); !errors.Is(err, storage.ErrLegacyLayout) {
+				t.Fatalf("RefuseLegacy = %v, want ErrLegacyLayout", err)
+			}
+			if err = storage.RequireMigrated(old, storage.NewPath(old)); err == nil {
+				t.Fatal("RequireMigrated accepted an unmigrated directory")
+			}
+			if after := snapshot(t, dir, old); after != before {
+				t.Fatalf("the old file or its directory changed:\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+		})
+	}
+}
+
+// migrate-data leaves the old file and its neighbours (-wal, -shm) as found, WAL mode included.
+func TestMigrateLegacyLeavesTheOldFilesAlone(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "main.db")
+	legacyDB(t, old, "")
+	db, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	names := func() string {
+		entries, _ := os.ReadDir(dir)
+		var b strings.Builder
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "main.db") {
+				info, _ := e.Info()
+				b.WriteString(e.Name() + ":" + fmt.Sprint(info.Size()) + "\n")
+			}
+		}
+		return b.String()
+	}
+	before := names()
+	if _, err = storage.MigrateLegacy(context.Background(), old, storage.NewPath(old)); err != nil {
+		t.Fatal(err)
+	}
+	if after := names(); after != before {
+		t.Fatalf("the old file's neighbours changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// A WAL that still holds content (a writer that has not checkpointed) is read, not ignored: the
+// guard must still see the old layout in it.
+func TestRefuseLegacyReadsALiveWAL(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "main.db")
+	db, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	db.SetMaxOpenConns(1)
+	for _, q := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA wal_autocheckpoint=0`, `CREATE TABLE schema_version (version TEXT)`} {
+		if _, err = db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fi, serr := os.Stat(old + "-wal"); serr != nil || fi.Size() == 0 {
+		t.Skip("this SQLite did not leave content in the WAL")
+	}
+	if err = storage.RefuseLegacy(old); !errors.Is(err, storage.ErrLegacyLayout) {
+		t.Fatalf("RefuseLegacy on a live WAL = %v, want ErrLegacyLayout", err)
 	}
 }
