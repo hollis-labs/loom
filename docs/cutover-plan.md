@@ -40,6 +40,23 @@ Not known: who calls `127.0.0.1:8092`. Ask before cutover (step 1.4).
 - One machine, one kind of client at a time, with the check after each. Nothing is switched for a client until its
   new credential has been tried.
 
+## Step zero: the live data directory holds only the old files (before anything else, every host)
+
+Any run of the new binary, even `loom --help`, `loom status` or `loom path`, boots the modules and **creates** a
+database, a signing key and its JWKS file in whichever data directory it resolves (a stray run of a new build did
+exactly this in another application's live directory). Nothing in this plan may be the first run to find out.
+
+1. List the live data directory, recursively and with sizes and times, as the service's user, and change nothing:
+   `find ~/.local/share/loom -ls` (the laptop: the same, plus each project's `.loom/data`).
+2. The expected content is exactly the old files and nothing else, for the server host:
+   `workspaces/default/main.db` and, while the service runs, its `main.db-wal` and `main.db-shm`.
+3. **If anything else is there, stop and report; do not proceed and do not delete it.** In particular: `loom.db`
+   (with its `-wal`/`-shm`), `identity-signing.key` or `identity-signing.key.jwks.json`, a `secrets/` directory, an
+   `exports/` directory, another `workspaces/<name>`. Each means the new build has already run there, and what it
+   created (an owner, keys, rows) must be understood first: `migrate-data` refuses to overwrite an existing
+   `loom.db`, and a signing key that already exists decides which issuer the database belongs to.
+4. Record the listing in the task. It is the "before" for the checks in section 1.
+
 ## 0. Before the window (anyone, no downtime)
 
 1. Publish the release from `main` (CI is green on the merge): a tarball `loom_<version>_linux_amd64.tar.gz` with
