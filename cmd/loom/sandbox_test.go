@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 		os.Setenv(k, v) //nolint:errcheck // a failed Setenv leaves the sandbox check below to fail
 	}
 	code := m.Run()
+	removeBuilt()
 	os.RemoveAll(dir) //nolint:errcheck,gosec // best-effort temp cleanup
 	os.Exit(code)
 }

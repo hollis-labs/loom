@@ -214,9 +214,12 @@ func openReadOnly(path string) (*sql.DB, error) {
 // file must be left exactly as found. When there is no WAL content to read (no -wal, or an empty
 // one, which is what a cleanly stopped writer leaves) the file is opened immutable, which takes
 // no locks and writes nothing; when a -wal with content exists it is opened mode=ro so that
-// content is still read (the files are already there, so none is created).
+// content is still read (the files are already there, so none is created), waiting up to 5s for a
+// live writer rather than failing.
 func readOnlyURI(path string) string {
-	q := "mode=ro"
+	// A live writer (the other process starting on the same file) can hold the WAL in recovery
+	// for a moment; wait for it rather than failing the start (SQLITE_BUSY_RECOVERY).
+	q := "mode=ro&_pragma=busy_timeout(5000)"
 	if fi, err := os.Stat(path + "-wal"); err != nil || fi.Size() == 0 {
 		q = "mode=ro&immutable=1"
 	}
