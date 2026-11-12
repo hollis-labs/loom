@@ -12,11 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hollis-labs/substrate/boot"
 	"github.com/hollis-labs/substrate/modules/cli"
-	"github.com/hollis-labs/substrate/modules/database"
-
-	"github.com/hollis-labs/loom/internal/storage"
 )
 
 const version = "0.1.0"
@@ -24,14 +20,14 @@ const version = "0.1.0"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Getenv); err != nil {
+	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "loom:", err)
 		stop()
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, args []string, getenv func(string) string) error {
+func run(ctx context.Context, args []string) error {
 	// -db, -workspace and -project/--no-project choose the data directory, which the modules need
 	// before they start; the commands get the rest.
 	rest, appArgs, err := splitAppArgs(args)
@@ -47,13 +43,7 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 		// database would make them refuse to start.
 		return migrateData(ctx, layout, explicitDB(appArgs), rest[1:], os.Stdout)
 	}
-	config, err := prepare(layout, getenv("SUBSTRATE_CONFIG"), explicitDB(appArgs))
-	if err != nil {
-		return err
-	}
-	useMigrations()
-
-	started, err := boot.Start(ctx, substrateApp, substrateModules, config)
+	started, err := startModules(ctx, layout, explicitDB(appArgs))
 	if err != nil {
 		return err
 	}
@@ -85,11 +75,4 @@ func passthrough(name string, run func(args []string) error) *cobra.Command {
 		DisableFlagParsing: true,
 		RunE:               func(_ *cobra.Command, args []string) error { return run(args) },
 	}
-}
-
-// useMigrations installs the embedded schema as the database module's migration source. It
-// must run before boot.Start.
-func useMigrations() {
-	fsys, root := storage.Migrations()
-	database.UseMigrationFS(fsys, root)
 }

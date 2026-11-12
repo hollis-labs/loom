@@ -11,8 +11,12 @@ config:
     sqlite: { path: loom.db }
   auth: { mode: enforce }
   identity: { key_file: identity-signing.key, session_ttl: 12h }
-  # The data directory is resolved at run time (project-local .loom/, -db/-workspace, XDG); the
-  # binary replaces the database, key and secrets paths with absolute ones before the modules start.
+  # Loom's own block (internal/settings); the SUBSTRATE_CONFIG file overrides it key by key.
+  loom:
+    llm_model: claude-sonnet-4-6
+    git_exclude_paths: [.git, node_modules, dist]
+  # The data directory is resolved at run time (project-local .loom/, -db/-workspace, XDG); an
+  # AfterConfig hook makes the database, key and secrets paths absolute before the modules start.
   # env: true so loom.llm_api_key_ref can be env://ANTHROPIC_API_KEY, the old way to supply the key.
   secrets: { state_dir: secrets, env: true }
   # /mcp needs the loom.mcp scope; stdio needs a token file (mcp.stdio_token_file) in enforce mode.

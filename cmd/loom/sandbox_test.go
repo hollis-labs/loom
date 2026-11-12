@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/substrate/module"
 )
 
 var realHome string
@@ -52,11 +54,30 @@ func TestExplicitDBKeepsStateBesideIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := prepare(layout, "", true)
+	app := &module.App{Config: map[string]any{
+		"database": map[string]any{"sqlite": map[string]any{"path": "loom.db"}},
+		"identity": map[string]any{"key_file": "identity-signing.key"},
+		"secrets":  map[string]any{"state_dir": "secrets"},
+	}}
+	resolvePaths(app, layout, true)
+	cfg := fmt.Sprint(app.Config)
+	for _, want := range []string{filepath.Join(dir, "x.db"), filepath.Join(dir, "identity-signing.key"), filepath.Join(dir, "secrets")} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("%s not in %s", want, cfg)
+		}
+	}
+}
+
+// A path the operator's override made absolute is left where they put it.
+func TestResolvePathsKeepsAbsolute(t *testing.T) {
+	layout, err := resolveLayout([]string{"-no-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cfg, filepath.Join(dir, "identity-signing.key")) || !strings.Contains(cfg, filepath.Join(dir, "secrets")) {
-		t.Fatalf("state not beside the db: %s", cfg)
+	abs := filepath.Join(t.TempDir(), "elsewhere.db")
+	app := &module.App{Config: map[string]any{"database": map[string]any{"sqlite": map[string]any{"path": abs}}}}
+	resolvePaths(app, layout, false)
+	if got := app.Config["database"].(map[string]any)["sqlite"].(map[string]any)["path"]; got != abs {
+		t.Fatalf("path = %v, want %s", got, abs)
 	}
 }

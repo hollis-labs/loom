@@ -17,7 +17,7 @@ import (
 
 const (
 	substrateApp        = "loom"
-	substrateConfigJSON = "{\"auth\":{\"mode\":\"enforce\"},\"database\":{\"sqlite\":{\"path\":\"loom.db\"}},\"httphost\":{\"addr\":\"127.0.0.1:8080\"},\"identity\":{\"key_file\":\"identity-signing.key\",\"session_ttl\":\"12h\"},\"logging\":{\"format\":\"text\",\"level\":\"info\"},\"mcp\":{\"scope\":\"loom.mcp\",\"version\":\"0.1.0\"},\"secrets\":{\"env\":true,\"state_dir\":\"secrets\"}}"
+	substrateConfigJSON = "{\"auth\":{\"mode\":\"enforce\"},\"database\":{\"sqlite\":{\"path\":\"loom.db\"}},\"httphost\":{\"addr\":\"127.0.0.1:8080\"},\"identity\":{\"key_file\":\"identity-signing.key\",\"session_ttl\":\"12h\"},\"logging\":{\"format\":\"text\",\"level\":\"info\"},\"loom\":{\"git_exclude_paths\":[\".git\",\"node_modules\",\"dist\"],\"llm_model\":\"claude-sonnet-4-6\"},\"mcp\":{\"scope\":\"loom.mcp\",\"version\":\"0.1.0\"},\"secrets\":{\"env\":true,\"state_dir\":\"secrets\"}}"
 )
 
 // substrateModules is the start order.

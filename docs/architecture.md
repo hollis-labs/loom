@@ -59,7 +59,7 @@ The owner holds `*`. Identity's own routes carry `authenticated` or `loom.admin`
 
 ### Config
 
-The manifest (`cmd/loom/substrate.yaml`) sets the defaults. The binary replaces the three data paths with absolute ones under the data directory before the modules start. Any key can be overridden in a YAML file named by `SUBSTRATE_CONFIG` (one level deep: a replaced nested block such as `database.sqlite` replaces the whole block).
+The manifest (`cmd/loom/substrate.yaml`) sets the defaults. A boot hook (`AfterConfig`) makes the three data paths absolute under the data directory once the override is applied; a path the override already made absolute is left alone. Any key can be overridden in a YAML file named by `SUBSTRATE_CONFIG`, which deep-merges: maps merge, scalars and lists replace, null removes a key.
 
 | Key | Default | Meaning |
 |---|---|---|

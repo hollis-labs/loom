@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hollis-labs/substrate/boot"
 )
 
 func writeOverride(t *testing.T, yaml string) string {
@@ -44,20 +42,10 @@ func started(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := prepare(layout, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]any
-	if err = json.Unmarshal([]byte(config), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	cfg["httphost"] = map[string]any{"addr": "127.0.0.1:0"} // port 0 asks for a free one
-	config2, _ := json.Marshal(cfg)
-
-	useMigrations()
+	// port 0 asks for a free one
+	t.Setenv("SUBSTRATE_CONFIG", writeOverride(t, "httphost:\n  addr: 127.0.0.1:0\n"))
 	ctx, cancel := context.WithCancel(context.Background())
-	run, err := boot.Start(ctx, substrateApp, substrateModules, string(config2))
+	run, err := startModules(ctx, layout, false)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -234,7 +222,7 @@ func TestMigrateDataThenStart(t *testing.T) {
 	}
 	_ = old.Close()
 
-	if _, err = prepare(layout, "", false); err == nil || !strings.Contains(err.Error(), "migrate-data") {
+	if _, err = startModules(t.Context(), layout, false); err == nil || !strings.Contains(err.Error(), "migrate-data") {
 		t.Fatalf("start on unmigrated data: err = %v, want a refusal naming migrate-data", err)
 	}
 	var out bytes.Buffer
@@ -247,12 +235,7 @@ func TestMigrateDataThenStart(t *testing.T) {
 	if err = migrateData(context.Background(), layout, false, nil, &out); err == nil {
 		t.Fatal("second migrate-data run accepted")
 	}
-	config, err := prepare(layout, "", false)
-	if err != nil {
-		t.Fatalf("start after migration: %v", err)
-	}
-	useMigrations()
-	run, err := boot.Start(t.Context(), substrateApp, substrateModules, config)
+	run, err := startModules(t.Context(), layout, false)
 	if err != nil {
 		t.Fatal(err)
 	}

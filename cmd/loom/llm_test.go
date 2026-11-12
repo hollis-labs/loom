@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/substrate/boot"
 	"github.com/hollis-labs/substrate/module"
 
 	"github.com/hollis-labs/loom/internal/service"
@@ -32,12 +31,7 @@ func startApp(t *testing.T, override string) *module.App {
 		file = writeOverride(t, override)
 		t.Setenv("SUBSTRATE_CONFIG", file)
 	}
-	config, err := prepare(layout, file, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	useMigrations()
-	run, err := boot.Start(t.Context(), substrateApp, substrateModules, config)
+	run, err := startModules(t.Context(), layout, false)
 	if err != nil {
 		t.Fatal(err)
 	}

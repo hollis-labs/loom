@@ -1,114 +1,104 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
 	paths "github.com/hollis-labs/libs/core/util/apppaths"
+
+	"github.com/hollis-labs/substrate/boot"
+	"github.com/hollis-labs/substrate/module"
+	"github.com/hollis-labs/substrate/modules/database"
 
 	"github.com/hollis-labs/loom/internal/storage"
 )
 
-// prepare returns the manifest config (the generated substrateConfigJSON) with the files that
-// live in the data directory as absolute paths. The manifest holds working-directory defaults;
-// the data directory (project-local .loom/, the -db/-workspace options, XDG) is only known at
-// run time.
+// startModules starts the modules the manifest selects. The data directory (project-local
+// .loom/, the -db/-workspace options, XDG) is only known at run time, so two boot hooks use it:
+// AfterConfig makes the file paths absolute, and a guard runs before the database module opens
+// (and so migrates) the file.
+func startModules(ctx context.Context, layout paths.Layout, explicitDB bool) (*boot.Running, error) {
+	useMigrations()
+	return boot.StartWith(ctx, substrateApp, substrateModules, substrateConfigJSON, boot.Options{
+		AfterConfig: func(_ context.Context, app *module.App) error {
+			resolvePaths(app, layout, explicitDB)
+			return nil
+		},
+		Before: map[string]boot.Hook{
+			"database": func(_ context.Context, app *module.App) error { return guardLegacy(app, layout) },
+		},
+	})
+}
+
+// resolvePaths writes the absolute locations of the files that live in the data directory into
+// app.Config, after the SUBSTRATE_CONFIG override is applied. A path the operator's override
+// already made absolute is left alone; a relative one is placed in the data directory.
 //
-// It also refuses a database that still has the pre-Substrate layout, before the database
-// module opens (and so migrates) the file.
-func prepare(layout paths.Layout, overrideFile string, explicitDB bool) (string, error) {
-	cfg := map[string]any{}
-	if err := json.Unmarshal([]byte(substrateConfigJSON), &cfg); err != nil {
-		return "", err
-	}
-	set := func(module, key, value string, nested ...string) {
-		m, _ := cfg[module].(map[string]any)
-		if m == nil {
-			m = map[string]any{}
-			cfg[module] = m
-		}
-		for _, n := range nested {
-			child, _ := m[n].(map[string]any)
-			if child == nil {
-				child = map[string]any{}
-				m[n] = child
-			}
-			m = child
-		}
-		m[key] = value
-	}
-	// The Substrate-era database is loom.db beside the old main.db, which stays untouched as the
-	// rollback (see `loom migrate-data`). An explicit -db is taken literally.
-	dbFile := databasePath(layout, explicitDB)
-	if err := storage.RequireMigrated(layout.MainDB(), dbFile); err != nil {
-		return "", err
-	}
-	set("database", "path", dbFile, "sqlite")
-	// Identity and secrets state live beside the database actually opened. With an explicit -db,
-	// layout.DataDir() is still the XDG default, so using it would write into another
-	// installation's directory.
-	stateDir := layout.DataDir()
+// The Substrate-era database is loom.db beside the old main.db, which stays untouched as the
+// rollback (see `loom migrate-data`). An explicit -db is taken literally, and the identity key
+// and secrets state then sit beside that file: layout.DataDir() is still the XDG default, so
+// using it would write into another installation's directory.
+func resolvePaths(app *module.App, layout paths.Layout, explicitDB bool) {
+	dbDir := filepath.Dir(layout.MainDB())
+	dataDir := layout.DataDir()
 	if explicitDB {
-		stateDir = filepath.Dir(dbFile)
+		dataDir = dbDir
 	}
-	set("identity", "key_file", filepath.Join(stateDir, "identity-signing.key"))
-	set("secrets", "state_dir", filepath.Join(stateDir, "secrets"))
-
-	dbPath, err := effectiveDatabasePath(cfg, overrideFile)
-	if err != nil {
-		return "", err
+	if explicitDB {
+		setConfig(app, layout.MainDB(), "database", "sqlite", "path")
+	} else {
+		place(app, dbDir, "database", "sqlite", "path")
 	}
-	if err = storage.RefuseLegacy(dbPath); err != nil {
-		return "", err
-	}
-	out, err := json.Marshal(cfg)
-	return string(out), err
+	place(app, dataDir, "identity", "key_file")
+	place(app, dataDir, "secrets", "state_dir")
 }
 
-// effectiveDatabasePath is the SQLite file the database module will open: the config's path,
-// unless the SUBSTRATE_CONFIG file replaces database.sqlite (the config module merges one
-// level deep, so a replaced sqlite block without a path falls back to the module default).
-func effectiveDatabasePath(cfg map[string]any, overrideFile string) (string, error) {
-	path := func(c map[string]any) (string, bool) {
-		db, _ := c["database"].(map[string]any)
-		sq, ok := db["sqlite"].(map[string]any)
-		if !ok {
-			return "", false
-		}
-		p, _ := sq["path"].(string)
-		return p, true
+// place makes the config value at path absolute under dir, unless it already is.
+func place(app *module.App, dir string, path ...string) {
+	m := configMap(app, path[:len(path)-1])
+	key := path[len(path)-1]
+	if p, _ := m[key].(string); !filepath.IsAbs(p) {
+		m[key] = filepath.Join(dir, p)
 	}
-	p, _ := path(cfg)
-	if overrideFile != "" {
-		b, err := os.ReadFile(overrideFile) //nolint:gosec // the operator names this file
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", overrideFile, err)
-		}
-		var override map[string]any
-		if err := yaml.Unmarshal(b, &override); err != nil {
-			return "", fmt.Errorf("parse %s: %w", overrideFile, err)
-		}
-		if op, replaced := path(override); replaced {
-			p = op
-			if p == "" {
-				p = substrateApp + ".db" // the database module's default, relative to the working directory
-			}
-		}
-	}
-	if p == "" {
-		return "", fmt.Errorf("no database path configured")
-	}
-	return filepath.Clean(p), nil
 }
 
-// databasePath is the file the database module opens for layout.
-func databasePath(layout paths.Layout, explicitDB bool) string {
-	if explicitDB {
-		return layout.MainDB()
+func setConfig(app *module.App, value string, path ...string) {
+	configMap(app, path[:len(path)-1])[path[len(path)-1]] = value
+}
+
+// configMap returns the nested map at path, creating the maps on the way.
+func configMap(app *module.App, path []string) map[string]any {
+	m := app.Config
+	for _, k := range path {
+		child, _ := m[k].(map[string]any)
+		if child == nil {
+			child = map[string]any{}
+			m[k] = child
+		}
+		m = child
 	}
-	return storage.NewPath(layout.MainDB())
+	return m
+}
+
+// guardLegacy refuses a database that still has the pre-Substrate layout, reading the path the
+// database module is about to open from app.Config.
+func guardLegacy(app *module.App, layout paths.Layout) error {
+	db, _ := app.Config["database"].(map[string]any)
+	sq, _ := db["sqlite"].(map[string]any)
+	path, _ := sq["path"].(string)
+	if path == "" {
+		return fmt.Errorf("no database path configured")
+	}
+	if err := storage.RequireMigrated(layout.MainDB(), path); err != nil {
+		return err
+	}
+	return storage.RefuseLegacy(path)
+}
+
+// useMigrations installs the embedded schema as the database module's migration source. It
+// must run before boot.
+func useMigrations() {
+	fsys, root := storage.Migrations()
+	database.UseMigrationFS(fsys, root)
 }

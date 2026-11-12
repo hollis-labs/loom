@@ -42,3 +42,21 @@ func OpenStore(ctx context.Context, path string) (*store.Store, error) {
 	}
 	return st, nil
 }
+
+// OpenRepository opens a migrated database the way the running app does: the repository writes
+// through the store's single write connection and reads through its read pool, which is cut to
+// one connection here so a read that waits for a second one deadlocks the test instead of
+// passing on a pool of four. The store is closed with the test.
+func OpenRepository(ctx context.Context, path string) (*storage.Repository, func(), error) {
+	cfg := store.Config{Driver: store.DriverSQLite, SQLite: store.SQLiteConfig{Path: path, CreateParentDir: true, ReadConns: 1}}
+	st, err := store.Open(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	fsys, root := storage.Migrations()
+	if err = migrate.Ensure(ctx, cfg, st, migrate.Source{FS: fsys, Root: root}); err != nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("migrate: %w", err)
+	}
+	return storage.NewRepositoryRW(st.DB(), st.Reader()), func() { _ = st.Close() }, nil
+}

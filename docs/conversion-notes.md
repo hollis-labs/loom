@@ -28,25 +28,21 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    to stop DNS rebinding, and to drop forwarding headers. Substrate has no module for it, so
    `internal/hostguard` is a copy of Basalisk's, with the flat error body and `loom.allowed_hosts`. Two copies of
    a security check is a smell: a Substrate `hostguard` option on `httphost` would replace both.
-3. **The manifest cannot carry the app's own config.** `config:` accepts only catalogue modules, so the `loom:` block
-   has no defaults in `substrate.yaml`. It is read from `app.Config["loom"]`, which the `config` module fills from the
-   `SUBSTRATE_CONFIG` file. Defaults are in `internal/settings`; a bad value or an unknown key stops startup naming
-   the key. (Same as Basalisk gap 2.)
-4. **The `config` override merges one level deep.** An override of `database.sqlite` replaces the whole block, so it
-   must repeat `path`. Flat blocks (`identity`, `mcp`, `loom`) merge key by key. (Basalisk gap 3.)
-5. **No hook to resolve run-time paths.** The data directory is only known at run time (project-local `.loom/`, the
-   `-db`/`-workspace`/`--no-project` options, XDG), but the manifest compiles to a constant. `cmd/loom/config.go`
-   rewrites the generated config JSON (database path, identity key file, secrets directory) before `boot.Start`, and
-   the command line is pre-scanned for the data options. (Basalisk gap 4.)
-6. **No pre-migration hook for the legacy guard.** The database module migrates as soon as it opens the file, so
-   `storage.RefuseLegacy` runs in `main` before `boot.Start`; it also reads a `database.sqlite.path` override from
-   the `SUBSTRATE_CONFIG` file, duplicating the config module's merge rule. (Basalisk gap 5.)
-7. **Frontend cannot be installed here.** `frontend/package.json` depends on `@hollis-labs/sysop-ui` as
+3. **Framework gaps closed at Substrate `09c04e5`.** Four things Basalisk worked around are now framework features and
+   Loom uses them: the manifest carries the app's own `loom:` block (defaults in `substrate.yaml`, read from
+   `app.Config["loom"]`); the `SUBSTRATE_CONFIG` override deep-merges (maps merge, scalars and lists replace, null
+   removes a key), so the copy of the old one-level rule is gone; boot hooks (`boot.StartWith`): `AfterConfig`
+   makes the database, identity key and secrets paths absolute against the data directory (`-db`, `-workspace`,
+   `--no-project`, project-local `.loom/`, XDG; an absolute path from the operator's override is left alone) and
+   `Before["database"]` runs the legacy-layout refusal reading the path from `app.Config`. `migrate-data` still runs
+   before boot, as it builds the new database itself. Still true: the data options are pre-scanned from the command
+   line because they decide the layout before any module starts.
+4. **Frontend cannot be installed here.** `frontend/package.json` depends on `@hollis-labs/sysop-ui` as
    `github:hollis-labs/sysop-ui#v0.9.0` (a git dependency, fetched over SSH); `npm ci` fails with "Could not read
    from remote repository" on this host, so typecheck and build were not run. Moving to `app-shell` and the
    BOM-pinned kits (from the npm registry) is the GUI track; see `frontend/CONVERSION_NOTES.md`. CI builds the UI
    before `go test`; it will stay red until that lands.
-8. **`scan-public --ref HEAD` is not clean, and part of it is in published history. DECIDED by the owner: the tree must be clean, history is left alone.** 16
+5. **`scan-public --ref HEAD` is not clean, and part of it is in published history. DECIDED by the owner: the tree must be clean, history is left alone.** 16
    findings on the pre-conversion history plus tree (before any conversion commit):
    - tree and history, `internal/llm/redact_test.go`: an AWS key, a GitHub token, a JWT and a PEM header, invented
      inputs for the redaction tests (4 findings, +4 from gitleaks). **Fixed in the tree**: the test now builds them
@@ -58,7 +54,7 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    Rule (owner, every repo): the TREE is clean in the port PR (`scan-public --tree`, which CI and `make scan` now
    run); HISTORY is not rewritten during the port and gets one planned rewrite pass after the migration, when the
    `--ref HEAD` gate returns. The table above is kept for that pass. No allow file is needed for Loom.
-9. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
+6. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
 
 ## Decisions made in the port
@@ -282,3 +278,17 @@ Two machines, two kinds of client.
   machine, then repoint the launch configs. An inventory of `.loom` directories on the server host found none.
 - Tokens and CORS: the old shared API token holders (`LOOM_API_TOKEN` / `-token`) are replaced by per-caller API
   keys; there is no CORS setting to carry over.
+
+
+## One write connection
+
+`database.From(app)` is libs core/store: one write connection (`DB()`, `WriteTx`) and a separate read-only pool
+(`Reader()`). Code written for an ordinary pool deadlocks if it issues a statement while a cursor or transaction
+is open on the writer. Audit of `internal/storage`, `internal/service`, `internal/api` and the MCP tools: every
+list method scans its rows into a slice and returns (one statement each, no nested query); the only transaction
+(`UpsertPage`) uses `tx` throughout and calls no other repository method; the MCP result cache issues single
+statements. No query is issued while another cursor is open. Change made anyway: the repository now writes through
+the writer and reads through `Reader()` (`storage.NewRepositoryRW`), so a read never queues behind a write.
+Tests: `TestEveryRouteWithOneReadConnection` and `TestEveryToolWithOneReadConnection` run every GET route (four
+at once, beside writes) and every MCP tool against a store whose read pool is one connection, under a deadline.
+(The database module has no read-pool setting, so Loom runs the default of four.)

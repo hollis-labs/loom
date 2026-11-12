@@ -55,7 +55,7 @@ func newLoom(ctx context.Context, app *module.App, layout paths.Layout) (*loom, 
 	if err != nil {
 		return nil, err
 	}
-	repo := storage.NewRepository(st.DB())
+	repo := storage.NewRepositoryRW(st.DB(), st.Reader())
 	comp := service.NewCompiler(repo)
 	if err = configureLLMProvider(ctx, app, comp, cfg); err != nil {
 		return nil, err
