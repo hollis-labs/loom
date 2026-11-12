@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check . && npm run lint:design",
     "lint:design": "eslint src",
-    "lint:fix": "biome check --write ."
+    "lint:fix": "biome check --write .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@hollis-labs/eslint-config-design": "0.5.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",

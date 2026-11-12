@@ -68,8 +68,25 @@ The ported API serves all five (every route above is in the backend's table): no
 7. The Vite build prints "use client" warnings from `@base-ui/react`; harmless.
 8. Biome 2.5.14 prints an info that `biome.json` is deprecated-shaped ("migrate"); same file as Basalisk.
 9. **app-shell has no narrow-viewport layout.** At 390 px wide the left nav stays 240 px and leaves about 150 px for the
-   page; nothing overflows horizontally (document width stays 390) but content is cramped. Checked on all five pages
+   page; nothing overflows horizontally (document width stays 390) but content is cramped. What a 390 px user sees:
+   the full nav column on the left (about 240 px, with Sign out and Diagnostics at its foot), then a narrow column
+   holding the page title, the bundle picker, the controls and (stacked, not side by side) the content, with long
+   words wrapping and tables clipped. Checked on all five pages
    and sign-out in Chrome. The pages stack their own two-column layouts below 64rem; the shell is not worked around.
 10. **`frontend.contributions` is in `cmd/loom/substrate.yaml`** (`ui/app.json`, relative to the manifest); the
     generated manifest comes from the real manifest (`npm run manifest`) and `substrate generate` leaves
     `substrate_wiring.go` unchanged.
+
+## Browser tests
+
+`npm run test:e2e` (Playwright, `tests/`) runs against the real backend binary on a throwaway data directory: the
+config starts `../loom` (build with `npm run build` then `make build`) with HOME and the XDG directories inside the
+temp directory, `rm -rf`s it first and never reuses a running server; global setup does first-run setup and stores the
+owner session. The suite covers sign-in/out, a wrong password, no data call while signed out, the five views with
+empty states and each write, a real 403 error state (a read-only user compiling), the non-admin `scope_required` on
+the key routes, deep links and 390 px width.
+
+Environment: `LOOM_E2E_PORT` (default 8080, the manifest default), `LOOM_E2E_BIN` (default `../loom`),
+`LOOM_E2E_DIR` (default `$TMPDIR/loom-e2e-<port>`), `PLAYWRIGHT_CHANNEL` (default `chrome`, the system Chrome; no
+browser is downloaded). CI needs: Node 24, Go, a system Chrome (or `PLAYWRIGHT_CHANNEL`), then `npm ci`,
+`npm run typecheck`, `npm run lint`, `npm run build`, `make build`, `npm run test:e2e` in `frontend/`.
