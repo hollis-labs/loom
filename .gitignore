@@ -43,3 +43,7 @@ Thumbs.db
 # Local agent docs (not published)
 CLAUDE.md
 docs/content-authoring-direction.md
+
+# Release build staging written at the repo root by the shared build workflow (go-app-build.yml);
+# untracked, it makes the Go build stamp the binary as +dirty.
+/dist/
