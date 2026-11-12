@@ -1,0 +1,45 @@
+name: build
+# Publishes the release tarballs (workflow artifacts only: no tag, no release, no install) that
+# `fleet-install` reads; deploy.yaml rides inside the linux/amd64 one. Modelled on Basalisk's build.yml.
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+  workflow_dispatch:
+    inputs: { ref: { description: "ref to build", required: false } }
+permissions: { contents: read }
+jobs:
+  build:
+    uses: hollis-labs/tools/.github/workflows/go-app-build.yml@145fb50d827a1af7e38236eda5751cee22970ba5   # tools main (extra_files, pre_test_cmd)
+    with:
+      app: loom
+      main_pkg: ./cmd/loom
+      node_version: "24"
+      # The binary embeds internal/webui/dist, which the frontend build writes. The reusable workflow
+      # runs ui_cmd before the Go build in both its test job and its build job, so the tarball's binary
+      # always embeds a built UI; verify-ui below proves it on the published artifact.
+      ui_cmd: "cd frontend && npm ci && npm run build"          # == make ui-build
+      test_cmd: "go vet ./... && go test -race -count=1 ./..."
+      extra_files: deploy.yaml
+      ldflags_var: ""       # cmd/loom's version is a const, not a variable to set with -X
+
+  # The published linux/amd64 binary, as downloaded, serves the console and not an empty embed.
+  verify-ui:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+      - name: Verify checksums, the shipped descriptor and the embedded UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          mkdir unpacked
+          tar -C unpacked -xzf dist/loom_*_linux_amd64.tar.gz
+          test -f unpacked/deploy.yaml || { echo "deploy.yaml is not in the tarball" >&2; exit 1; }
+          cmp deploy.yaml unpacked/deploy.yaml
+          scripts/verify-ui-binary unpacked/loom
