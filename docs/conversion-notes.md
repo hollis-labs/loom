@@ -168,24 +168,25 @@ cookie. (`loom.example.yaml` shows it commented out.)
   once an owner exists. The owner holds scope `*`.
 - `POST /api/login {username, password}` (public) -> 200 profile + cookie; `401 invalid_login` (a bad credential: show it
   on the form, it is not "session ended"); `429 rate_limited` (five failures in five minutes for a user and address;
-  the sixth answers 429 and so does the correct password until the window passes; no `Retry-After`, show "wait a few
+  the sixth answers 429 and so does the correct password until the window passes; `Retry-After: 300` (seconds) is set, use it or show "wait a few
   minutes").
 - `POST /api/logout` -> 204, cookie cleared. `PUT /api/password {current_password, new_password}` -> 204 and every
   other session ends; wrong current password is `401 invalid_login` (not a signed-out state); `403 user_required`
   for an API key; `400 invalid_request` with the reason in `message`. Minimum password length is the server's
   (`identity.min_password`): show the server's message.
-- Profile = `{id, username, display_name, email, scopes}`. There is no read route for the signed-in caller yet
-  (`GET /api/identity/profile` answers 403 `route_not_mapped` for everyone on this branch, observed in a browser; the framework route is planned). After a reload the
-  UI does not know the profile: treat any `401 unauthorized` as signed out.
+- Profile = `{id, username, display_name, email, scopes}`. `GET /api/identity/profile` (Substrate bac8c60) returns
+  `{id, username, display_name, email, scopes, assurance}` (`assurance` is `local`) for a signed-in person; 401
+  `unauthorized` when signed out; `403 user_required` for an API key. Use it after a reload; any other `401
+  unauthorized` also means signed out.
 - Also under `/api/identity/`: `PUT profile`, `GET sessions` and `DELETE sessions/{id}`, `GET|POST users` and
   `PUT users/{id}` (administrators: `loom.admin`), `GET|POST keys` and `DELETE keys/{id}`, `POST pairing-codes`,
   `GET jwks`; `POST /api/pair`, `POST /api/token` for machines. The cookie is HttpOnly, SameSite=Strict; the UI never
   sees it. Session life: the manifest sets 12h.
 - Key creation `POST /api/identity/keys {name, scopes, audiences?, ttl_hours?}` -> 201 `{key: "key_...", credential}`;
-  the key is shown once. `GET keys` -> `{"keys": [...]}`, and an empty list is `{"keys": null}` (treat null as empty);
+  the key is shown once. `GET keys` -> `{"keys": [...]}`, and an empty list is `{"keys": []}` (it was `null` before bac8c60; treating null as empty is still harmless);
   revoked keys vanish. The key, pairing-code and user routes need the app's admin scope, `loom.admin` (the app name plus `.admin`);
   the owner holds `*`, which covers it. A signed-in non-admin gets `403 scope_required` with message
-  "required scope: loom.admin"; the owner gets 200 (`{"keys": null}` when empty). Treat 403 as "denied". (Observed in
+  "required scope: loom.admin"; the owner gets 200 (`{"keys": []}` when empty). Treat 403 as "denied". (Observed in
   a browser; the contract is Torque CW-20261112-0080, comments 23312 and 23321.)
 
 **Errors.** Every non-2xx `/api/` response is `{"code": "...", "message": "...", "details"?}`. Show `message`. Codes seen:
@@ -243,7 +244,7 @@ frontend needs a way to fetch it (SSH key for the host, or the package from the 
 shape: `app-shell` and the kits pinned in Substrate's `bom/bom.yaml`). See `frontend/CONVERSION_NOTES.md`.
 
 **What the identity module does not provide:** screens (setup, sign-in, password, keys, pairing are the app's, or the
-planned `@hollis-labs/kit-identity` kit), a user-menu region in app-shell, a profile read route, and a published
+planned `@hollis-labs/kit-identity` kit), a user-menu region in app-shell, and a published
 scope list (scopes are free strings, by convention `<app>.<verb>`).
 
 ## Data migration
@@ -327,6 +328,10 @@ Outline, to be approved by the owner before any cutover:
 
 ## For the operator
 
+- **Signing-key rotation** comes with the identity module, nothing to build: `GET /api/identity/signing-key` shows the
+  active and retired keys, `POST /api/identity/signing-key/rotate` makes a new one (needs `loom.admin`; the owner
+  has it). The old key stays valid for `identity.retired_key_ttl` (70 minutes minimum) so minted tokens survive the
+  switch. Worth a line in the cutover run-book; not needed for the first deployment.
 - **Migrate the data before the first start:** `loom migrate-data` (or `--all`). Startup refuses an unmigrated
   old database and says so. First-run setup creates the owner afterwards.
 - Health is `GET /healthz` (database included).
