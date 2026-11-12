@@ -185,3 +185,57 @@ func TestRequireMigrated(t *testing.T) {
 		t.Fatalf("after migration: %v", err)
 	}
 }
+
+// An old file with anything the copy would not carry stops the run, naming it, and leaves no new file.
+func TestMigrateLegacyRefusesWhatItWouldDrop(t *testing.T) {
+	for name, tc := range map[string]struct{ ddl, want string }{
+		"unlisted table":      {`CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)`, `table "notes"`},
+		"trigger":             {`CREATE TRIGGER tr AFTER INSERT ON templates BEGIN SELECT 1; END`, `trigger "tr"`},
+		"view":                {`CREATE VIEW v AS SELECT slug FROM wiki_bundles`, `view "v"`},
+		"virtual table":       {`CREATE VIRTUAL TABLE ft USING fts5(body)`, `"ft"`},
+		"autoincrement":       {`CREATE TABLE seq (id INTEGER PRIMARY KEY AUTOINCREMENT)`, `AUTOINCREMENT`},
+		"extra old column":    {`ALTER TABLE wiki_pages ADD COLUMN secret TEXT`, `wiki_pages.secret`},
+		"changed column type": {`ALTER TABLE templates RENAME COLUMN body TO body_old; ALTER TABLE templates ADD COLUMN body INTEGER; ALTER TABLE templates DROP COLUMN body_old`, `templates`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			old := filepath.Join(dir, "main.db")
+			legacyDB(t, old, "")
+			db, err := sql.Open("sqlite", old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(tc.ddl); err != nil {
+				t.Skipf("this SQLite cannot build the case: %v", err)
+			}
+			_ = db.Close()
+			to := storage.NewPath(old)
+			if _, err = storage.MigrateLegacy(context.Background(), old, to); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+			if _, err = os.Stat(to); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("new database exists after a refused run: %v", err)
+			}
+		})
+	}
+}
+
+// The old schema (the nine numbered migrations) has no AUTOINCREMENT, trigger, view or virtual
+// table, so the copy has no sequence or object to carry. The refusals above cover the day it does.
+func TestLegacySchemaHasNoSequencesOrTriggers(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "main.db")
+	legacyDB(t, old, "")
+	db, err := sql.Open("sqlite", old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var n int
+	if err = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type IN ('trigger','view') OR name='sqlite_sequence' OR upper(sql) LIKE '%AUTOINCREMENT%' OR upper(sql) LIKE '%VIRTUAL TABLE%'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("the old schema has %d sequence/trigger/view/virtual objects", n)
+	}
+}

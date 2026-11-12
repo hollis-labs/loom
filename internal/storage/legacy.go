@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/libs/core/store"
@@ -219,6 +220,12 @@ func copyTables(ctx context.Context, db *sql.DB, from string) error {
 		return fmt.Errorf("migrate: attach old database: %w", err)
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), `DETACH DATABASE old`) }()
+	if err = requireKnownObjects(ctx, conn); err != nil {
+		return err
+	}
+	if err = requireSameColumns(ctx, conn); err != nil {
+		return err
+	}
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -250,8 +257,128 @@ func copyTables(ctx context.Context, db *sql.DB, from string) error {
 		if _, err = tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("migrate: copy %s: %w", t, err)
 		}
+		if err = requireSameContent(ctx, tx, t, list); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+// requireKnownObjects refuses an old file that holds anything the copy does not know about: a
+// table outside copyOrder (other than the deliberately skipped cache, schema_version and SQLite's
+// own), a trigger, a view, a virtual table, or a table that uses AUTOINCREMENT (whose sequence
+// would not carry over). The pre-Substrate schema (the nine numbered migrations) had none of the
+// last three.
+func requireKnownObjects(ctx context.Context, conn *sql.Conn) error {
+	known := map[string]bool{"wiki_result_cache": true, "schema_version": true}
+	for _, t := range copyOrder {
+		known[t] = true
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT type, name, COALESCE(sql, '') FROM old.sqlite_master WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\'`)
+	if err != nil {
+		return fmt.Errorf("migrate: list the old database's objects: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var typ, name, ddl string
+		if err = rows.Scan(&typ, &name, &ddl); err != nil {
+			return err
+		}
+		upper := strings.ToUpper(ddl)
+		switch {
+		case typ == "trigger" || typ == "view":
+			return fmt.Errorf("migrate: the old database has a %s %q that the copy would drop; stopping", typ, name)
+		case typ == "table" && strings.Contains(upper, "CREATE VIRTUAL TABLE"):
+			return fmt.Errorf("migrate: the old database has a virtual table %q that the copy would drop; stopping", name)
+		case typ == "table" && strings.Contains(upper, "AUTOINCREMENT"):
+			return fmt.Errorf("migrate: the old table %q uses AUTOINCREMENT, whose sequence the copy does not carry; stopping", name)
+		case typ == "table" && !known[name] && !strings.HasPrefix(name, "sqlite_"):
+			return fmt.Errorf("migrate: the old database has a table %q the migration does not know; stopping rather than dropping it", name)
+		}
+	}
+	return rows.Err()
+}
+
+// columnInfo is what pragma_table_info reports for one column.
+type columnInfo struct {
+	Type    string
+	NotNull int
+	PK      int
+}
+
+func schemaColumns(ctx context.Context, conn *sql.Conn, schema, table string) (map[string]columnInfo, error) {
+	//nolint:gosec // table and schema come from the fixed copyOrder list
+	rows, err := conn.QueryContext(ctx, fmt.Sprintf(`SELECT name, type, "notnull", pk FROM pragma_table_info('%s', '%s')`, table, schema))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]columnInfo{}
+	for rows.Next() {
+		var name string
+		var c columnInfo
+		if err = rows.Scan(&name, &c.Type, &c.NotNull, &c.PK); err != nil {
+			return nil, err
+		}
+		out[name] = c
+	}
+	return out, rows.Err()
+}
+
+// requireSameColumns compares each copied table's columns in the old and new schemas: name,
+// declared type, NOT NULL and primary-key position. The copy selects the new table's columns
+// from the old one, so a column only the old table has would be dropped without a word.
+func requireSameColumns(ctx context.Context, conn *sql.Conn) error {
+	for _, t := range copyOrder {
+		oldCols, err := schemaColumns(ctx, conn, "old", t)
+		if err != nil {
+			return fmt.Errorf("migrate: columns of old table %s: %w", t, err)
+		}
+		newCols, err := schemaColumns(ctx, conn, "main", t)
+		if err != nil {
+			return fmt.Errorf("migrate: columns of new table %s: %w", t, err)
+		}
+		if len(oldCols) == 0 {
+			return fmt.Errorf("migrate: the old database has no table %s", t)
+		}
+		for name, o := range oldCols {
+			n, ok := newCols[name]
+			if !ok {
+				return fmt.Errorf("migrate: old column %s.%s has no counterpart in the new schema; stopping rather than dropping it", t, name)
+			}
+			if n != o {
+				return fmt.Errorf("migrate: column %s.%s differs: old %+v, new %+v", t, name, o, n)
+			}
+		}
+		for name := range newCols {
+			if _, ok := oldCols[name]; !ok {
+				return fmt.Errorf("migrate: new column %s.%s does not exist in the old table", t, name)
+			}
+		}
+	}
+	return nil
+}
+
+// requireSameContent proves the copy by content, inside the copy transaction: no row of the old
+// table is missing or changed in the new one, and the new one has no row the old one lacks. A
+// matching row count with a truncated or altered value fails here.
+func requireSameContent(ctx context.Context, tx *sql.Tx, table, cols string) error {
+	q := quoteIdent(table)
+	for _, dir := range []struct{ a, b, what string }{
+		{"old", "main", "in the old database but missing or changed in the new one"},
+		{"main", "old", "in the new database but not in the old one"},
+	} {
+		var n int
+		//nolint:gosec // table and column list come from the fixed copyOrder list and the new schema
+		query := fmt.Sprintf(`SELECT count(*) FROM (SELECT %s FROM %s.%s EXCEPT SELECT %s FROM %s.%s)`, cols, dir.a, q, cols, dir.b, q)
+		if err := tx.QueryRowContext(ctx, query).Scan(&n); err != nil {
+			return fmt.Errorf("migrate: compare %s content: %w", table, err)
+		}
+		if n != 0 {
+			return fmt.Errorf("migrate: %d rows of %s are %s", n, table, dir.what)
+		}
+	}
+	return nil
 }
 
 // verify compares per-table row counts between the old and new files, and runs the new file's

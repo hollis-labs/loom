@@ -262,8 +262,13 @@ workspace maps to one run, as before. The only new rule is the file name.
   before the modules start. It opens the old file read-only, requires all nine old migrations in `schema_version`,
   builds the new file under a temporary name with the goose schema, copies every table by column name inside one
   transaction (keys preserved; the new schema's seed rows are replaced by the old rows, so an edited or deleted
-  seed stays as it was), compares per-table row counts, runs `integrity_check` and `foreign_key_check`, folds the
-  WAL and only then renames the file into place. A failure leaves nothing at the target; a second run refuses
+  seed stays as it was), proves the copy and only then renames the file into place. Before copying it refuses the
+  old file when the two schemas differ (per copied table: column name, declared type, NOT NULL and primary-key
+  position, both directions), or when the old file holds an object nobody listed (a table outside the copied set,
+  `wiki_result_cache` and `schema_version`; any trigger, view or virtual table; any table using AUTOINCREMENT), naming it.
+  Inside the copy transaction, per table, it checks `SELECT … FROM old.t EXCEPT SELECT … FROM main.t` and the
+  reverse are both empty (content, not only counts; NULL and empty string differ). After it: per-table row counts,
+  `integrity_check`, `foreign_key_check`, the WAL is folded. A failure leaves nothing at the target; a second run refuses
   because the target exists. The old file is not written, so rollback is: stop, point the previous build at the
   old data directory (`loom.db` can stay or go).
 - Copied: `wiki_bundles`, `wiki_pages`, `wiki_links`, `wiki_verifications`, `compile_jobs`, `compile_events`,
@@ -272,9 +277,13 @@ workspace maps to one run, as before. The only new rule is the file name.
 - Tests (`internal/storage/legacy_test.go`, `cmd/loom/boot_test.go`) use synthetic fixtures built from the nine
   old migrations (`internal/storage/testdata/legacy`): all tables, keys, links to pages, the `by` column, the
   old file byte-for-byte unchanged, the refusal paths and a real start on the migrated file.
-- **Not yet done:** the rehearsal on a copy of the live files. It needs a copy made with the SQLite online backup
-  (never put in the repo, a fixture, a log or a mail); row counts per table, integrity and foreign-key checks and the
-  measured duration go here when it has run.
+- The old schema (the nine numbered migrations) has no AUTOINCREMENT, trigger, view or virtual table; a test asserts it
+  (`TestLegacySchemaHasNoSequencesOrTriggers`), so there is no `sqlite_sequence` to carry, and the refusal above covers
+  the day it does. The rehearsal is in its own section below.
+- **Runbook:** run `migrate-data` on a stopped service or on an online-backup copy, never beside a running writer (a
+  concurrent write makes the count or content check fail, which is safe but confusing). `--all` covers the workspaces
+  under the layout only; the project-local `.loom` directories on the owner's laptop are migrated one by one, by
+  running `loom migrate-data` from inside each checkout.
 
 ## The live instance and the cutover outline
 
@@ -358,6 +367,12 @@ No row content was copied anywhere else.
   file reads the migrated data.
 - `wiki_result_cache` is not copied: it is a TTL cache and repopulates on use (accepted by the driver).
 - The served instance holds almost nothing, so this proves the mechanics, not volume.
+
+**Second rehearsal, after the content, schema and unlisted-object checks (same copy, sha256 begins 8b689afe75feb54c,
+explicit temporary HOME and XDG):** the schema check passes on the real file (the squashed schema equals the old
+final one), migrate 9 ms, counts as above, `SELECT *` of `wiki_bundles` and `templates` hash identically on both
+sides, `integrity_check` ok, `foreign_key_check` clean, old file sha256 unchanged, second run refused, `loom mcp -db
+<old>` and `status -db <old>` refused naming `loom migrate-data`, `status` on the new file reads the data.
 
 ## Test isolation
 
