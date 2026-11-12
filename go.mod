@@ -1,6 +1,6 @@
 module github.com/hollis-labs/loom
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
@@ -8,10 +8,11 @@ require (
 	github.com/hollis-labs/libs/core/store v0.1.0
 	github.com/hollis-labs/libs/core/util v0.6.0
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0
-	github.com/hollis-labs/libs/security/auth v0.3.0
+	github.com/hollis-labs/libs/security/auth v0.3.1
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0
-	github.com/hollis-labs/substrate v0.1.1-0.20261112162132-d453ac897397
+	github.com/hollis-labs/substrate v0.1.1-0.20261112164520-da9f59bb59b7
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.47.0
@@ -52,7 +53,6 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
