@@ -296,7 +296,7 @@ func TestLegacyGuardsLeaveTheOldFileAlone(t *testing.T) {
 	}
 }
 
-// migrate-data leaves the old file and its neighbours (-wal, -shm) as found, WAL mode included.
+// migrate-data leaves the old file and its neighbors (-wal, -shm) as found, WAL mode included.
 func TestMigrateLegacyLeavesTheOldFilesAlone(t *testing.T) {
 	dir := t.TempDir()
 	old := filepath.Join(dir, "main.db")
@@ -327,7 +327,7 @@ func TestMigrateLegacyLeavesTheOldFilesAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if after := names(); after != before {
-		t.Fatalf("the old file's neighbours changed:\nbefore:\n%s\nafter:\n%s", before, after)
+		t.Fatalf("the old file's neighbors changed:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 
