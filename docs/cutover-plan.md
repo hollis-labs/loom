@@ -6,9 +6,13 @@ Status: **draft for the owner's approval. Nothing here has been run.** Merging t
 **Pre-merge `main`: `be38c7e`** ("Docs: state the release posture for tokenless loopback"). That is the last commit
 of the old version. A fix to the running version is cut from `be38c7e`, not from `main`, until the cutover is done.
 
-Steps marked **PENDING** depend on the offline identity bootstrap (a Substrate identity command that creates the
-first owner and a key from the command line, no server) and on local stdio trust. Neither exists yet; those steps are
-written against the brief and must be re-checked when the framework change lands.
+Related drafts: PR #15 (the two-processes test behind section 2) and PR #16 (`deploy.yaml`, section 0 and the
+rollbacks).
+
+**The cutover does not start until the offline identity bootstrap exists** (a Substrate identity command that creates
+the first owner and keys from the command line, no server). It is a precondition, not a step to improvise around.
+Steps marked **PENDING** also depend on local stdio trust; neither exists yet, and those steps are written against the
+brief and must be re-checked when the framework change lands.
 
 ## What runs today (from the owner side; the live instance was not opened or copied)
 
@@ -28,59 +32,112 @@ Not known: who calls `127.0.0.1:8092`. Ask before cutover (step 1.4).
   refuses to overwrite one. **Rollback is therefore: stop the new build, start the old build on the old files.**
 - Migrate a stopped service or an online-backup copy, never beside a writer. The command also refuses if the old file
   changed while it ran.
+- **No open setup window, ever.** First-run setup over HTTP (`POST /api/setup`) is not used, not even once and not
+  on loopback. Loopback is not a boundary on this host: another application's loopback first-run setup was reached
+  today by an agent on the same host, which became its owner. The owner and the first keys are created by the offline
+  bootstrap **before the service is started**, and the first check after start is that `GET /api/setup` answers
+  `{"setup_required":false}`. If it answers true, stop the service at once.
 - One machine, one kind of client at a time, with the check after each. Nothing is switched for a client until its
   new credential has been tried.
 
 ## 0. Before the window (anyone, no downtime)
 
-1. Build and publish the release from `main` (CI is green on the merge). Record the commit.
-2. Copy the old binary aside on both machines (`loom` of the running version) so rollback is a file swap.
+1. Publish the release from `main` (CI is green on the merge): a tarball `loom_<version>_linux_amd64.tar.gz` with
+   `SHA256SUMS` and `deploy.yaml` (PR #16). This needs a build workflow that Loom does not have yet (open items).
+   Record the commit; it is the `--commit` of the deploy.
+2. Keep the old binary aside, once, on both machines. `be38c7e` has no `deploy.yaml` and no published artifact, so
+   `fleet-install deploy loom --commit be38c7e` cannot bring it back; the first rollback is a file swap (see
+   section 1). From the second deploy on, rollback is `fleet-install deploy loom --commit <previous>`.
 3. Rehearse on a fresh online-backup copy of the live file, in a scratch directory with `HOME` and every XDG variable
    pointed there (the rehearsal procedure and the recorded results are in `docs/conversion-notes.md`). Counts must
    match, `integrity_check` ok, `foreign_key_check` clean, old file checksum unchanged.
 4. Inventory the callers of `127.0.0.1:8092` (the owner of the service knows who holds the old token or relies on the
-   old CORS origins list). Decide per caller: a key with `loom.read` and `loom.write`, or retire.
+   old CORS origins list). Decide per caller: a key with `loom.read` and `loom.write`, or retire. These keys are
+   created by the bootstrap in step 1.5.
 5. Inventory every `.loom` directory on the laptop: `find <projects> -name main.db -path '*.loom*'`.
+6. Announce to the agents that use the `loom_*` tools that they will be unavailable for the window (see the downtime
+   table).
 
 ## 1. The served instance (server host)
 
 Downtime: the service is stopped for the migration and restart, expected **under a minute** (the migration took
-under 20 ms on the copy; the rest is stop, swap, start and the first-run steps).
+under 20 ms on the copy; the rest is stop, migrate, bootstrap, deploy and the first checks). The `loom_*` tools are
+unavailable to agents for longer, from step 2 until the end of section 2 (downtime table).
 
-1. Write the new service config file (named by `SUBSTRATE_CONFIG`): `httphost.addr: "127.0.0.1:8092"`, `loom.llm_*`
-   and `loom.otel_*` if the old environment had them (see the old-to-new table), `loom.allowed_hosts` if it sits
-   behind a local TLS proxy. Hand the descriptor change (no `--addr`, no `ANTHROPIC_API_KEY` or `LOOM_OTEL_*`, add
-   `SUBSTRATE_CONFIG`) to the owner of the service manager.
-2. **Stop the service.** The Tether child (section 2) is also attached to the same file: stop the gateway's loom
-   server first, or the migration refuses ("changed during the migration").
-3. Back up: copy `~/.local/share/loom/workspaces/default/` (online backup form, `main.db` plus `-wal`/`-shm` are not
-   needed if the service is stopped cleanly) to a dated directory.
-4. Install the new binary. Run `loom migrate-data --all` (or `--from <main.db> --to <loom.db>`). Expect a JSON report
-   per database with counts, `integrity_check: ok`, `foreign_key_check: ok`, `old_file: untouched`.
-5. Start the service on the new build. Check `/healthz` (database ok).
-6. **PENDING (offline identity bootstrap):** create the first owner and the first keys with the bootstrap command.
-   Until it exists the only way is first-run setup over HTTP, `POST /api/setup`, from the host itself while the
-   listener is loopback-only; do not widen the listener before that is done.
-7. Verify: sign in, one write (compile a page), one read, an unknown `Host` refused (403), `/mcp` with a key
-   listing the 30 tools.
+1. Write the new config file `~/.config/loom/loom.yaml` (the path the drop-in in `deploy.yaml` names, named by
+   `SUBSTRATE_CONFIG`): `httphost.addr: "127.0.0.1:8092"`, `loom.llm_*` and `loom.otel_*` if the old environment had
+   them (see the old-to-new table), `loom.allowed_hosts` if it sits behind a local TLS proxy, and
+   `mcp.stdio_token_file` for the child (section 2). The unit change (no `--addr`, `SUBSTRATE_CONFIG` set) is the
+   drop-in that `fleet-install` writes; nothing is handed to the owner of the service manager by hand.
+2. **Stop the Tether gateway's loom child, then the service.**
+   - The child is the Tether gateway's, not Loom's and not mine: **the driver stops it, on the Tether side**, through
+     the gateway's own configuration for the loom server (remove or disable the entry and reload the gateway; the
+     driver names the exact action). I do not touch the gateway.
+   - What agents see while it is stopped: the `loom_*` tools fail (or are absent from the gateway's tool list,
+     depending on how the entry is taken out); no other tool is affected and no data is lost.
+   - Confirm it is gone before going on: no `loom mcp` process is attached to the host's `main.db`
+     (`pgrep -af 'loom mcp'`). The migration also refuses if the file changed while it ran.
+   - Then stop the service: `systemctl --user stop loom`.
+3. Back up: copy `~/.local/share/loom/workspaces/default/` (`main.db` plus `-wal`/`-shm` are not needed once the
+   service is stopped cleanly) to a dated directory.
+4. Extract the new binary from the release tarball into a scratch directory (it is not installed yet). As the service's
+   user, with its `HOME`, run `loom migrate-data --all`. Expect a JSON report per database with counts,
+   `integrity_check: ok`, `foreign_key_check: ok`, `old_file: untouched`. This also creates `loom.db`, so neither
+   process ever starts on an empty file (see section 2, concurrent start).
+5. **PENDING (offline identity bootstrap, precondition):** with the service still stopped, run the bootstrap command
+   with the same binary, config file and `HOME`. It creates the owner and the keys: one per caller from step 0.4, and
+   the child's key written to a file readable only by the service's user. Nothing in this plan opens a setup window as
+   a stand-in; if the bootstrap does not exist yet, the cutover waits.
+6. Deploy: `fleet-install deploy loom --commit <sha>`. Its preflight backs up `loom.db`, it installs the release,
+   flips `~/.local/bin/loom`, writes the drop-in, restarts `loom.service` and checks `/healthz`.
+7. **First check, before anything else:** `GET /api/setup` answers `{"setup_required":false}`. If it does not, stop
+   the service (`systemctl --user stop loom`) and investigate; the bootstrap did not take.
+8. Verify: sign in with the bootstrap's credentials, one write (compile a page), one read, an unknown `Host` refused
+   (403), `/mcp` with a key listing the 30 tools.
 
-**Rollback:** stop the new service, put the old binary and the old descriptor back, start. The old `main.db` was
-never written; `loom.db` can stay or go.
+**Rollback.** First cutover (the previous version has no descriptor): stop the service, remove the drop-in the
+installer wrote (`loom.service.d/20-fleet-exec.conf`) and `systemctl --user daemon-reload`, replace the symlink
+`~/.local/bin/loom` with the preserved old binary (step 0.2), start. The old `main.db` was never written; `loom.db`
+can stay or go. Every later deploy: `fleet-install deploy loom --commit <previous>` (or `fleet-install rollback
+loom`); a migration that already ran is not reversed by either, the backup from the preflight is the restore.
 
 ## 2. The Tether gateway's child (server host)
 
-Today: `loom mcp --no-project -db …/main.db`. After: the same command against the migrated file with a key.
+Today: `loom mcp --no-project -db …/main.db`. After the cutover the service and this child both open the **same**
+`loom.db`. PR #15 runs that topology with the real binary (service plus child, sandboxed home) and answers:
+
+- **(a) Two directories, if the child keeps `-db`.** The service (no `-db`) keeps its identity signing key and
+  secrets in the data directory (`~/.local/share/loom/`); a child launched with `-db …/workspaces/default/loom.db`
+  keeps its own beside that file (`~/.local/share/loom/workspaces/default/`). Same database, two signing keys.
+- **(b) Credentials are shared, signing keys are not.** A key created through the service authenticates on the child's
+  stdio and on the service's `/mcp` alike, because keys and sessions are rows in the database. Only locally minted JWTs
+  depend on the signing key, and each process would verify only its own. So the split would not lock anyone out today
+  but is a trap the day something mints a JWT or the key is rotated.
+- **(c) Concurrent start.** Starting both at once on an *empty* file is not safe: in 3 of 5 rounds one process lost the
+  race (`database is locked`, or the migration found its tables already created); the file was never damaged and a
+  lone start afterwards worked (library behaviour, not fixed here). On an *already migrated* file concurrent starts are
+  clean: the start-up guard that failed that case was this repository's, fixed in PR #15. Hence step 1.4 creates the
+  schema first, and the order below.
+- **(d) A write through the child while the service holds a write transaction waits and succeeds**, it does not fail
+  busy at once: tested with 1.5 s and 7 s holds. The bound comes from the library (5 s busy timeout, up to 5
+  attempts, about 25 s before a write fails busy); I did not run a hold that long.
+
+**The fix, in this section: one config for both.** Launch the child with the same `SUBSTRATE_CONFIG` file as the
+service and **no `-db`**. It then resolves the same data directory, the same signing key and the same
+`workspaces/default/loom.db`; PR #15 shows it writes no second key and its write is visible through the service.
 
 1. Decision pending with the framework: whether a gateway-launched child counts as local (filesystem trust). If yes,
-   **PENDING**: no key file; the launch config changes `-db` to `…/workspaces/default/loom.db` only. If no:
-   create a key (scopes `loom.mcp loom.read loom.write`), write it to a file readable only by the gateway's user, add
-   `mcp.stdio_token_file` to the `SUBSTRATE_CONFIG` file the child is launched with.
-2. Change the launch config (Tether side, routed through the driver), restart the child.
+   **PENDING**: no key file; the launch config drops `-db` and adds `SUBSTRATE_CONFIG`. If no: the child's key from
+   step 1.5 sits in a file readable only by the gateway's user, and `mcp.stdio_token_file` in the shared config names
+   it (the service never reads it).
+2. Change the launch config (Tether side, routed through the driver): `loom mcp --no-project`, environment
+   `SUBSTRATE_CONFIG=~/.config/loom/loom.yaml`, binary `~/.local/bin/loom`. Start it **after** step 1.7 has passed (the
+   service first, the child second; this also holds for every later release that carries a migration).
 3. Verify: the gateway lists the 30 tool names unchanged, one `loom_status` call, one write and one read as an agent.
 4. Note: with no verified principal (local trust, once it exists) lists are returned truncated with no deep-dive
    pointer; see "What a client sees without a verified principal" in `docs/conversion-notes.md`.
 
-**Rollback:** point the child back at the old binary and `main.db`.
+**Rollback:** point the child back at the old binary and `main.db` (and `-db`), through the driver.
 
 ## 3. The laptop's project-local `.loom` directories
 
@@ -90,15 +147,17 @@ For each directory from the inventory (step 0.5):
 1. Close the agent sessions using that checkout (their `loom mcp` child exits).
 2. `cd <checkout> && loom migrate-data` (or `--from .loom/data/workspaces/default/main.db --to …/loom.db`). Check the
    report.
-3. **PENDING:** a project-local database used only over stdio should not need an owner, keys or a signing key once
-   local trust lands. Until then each needs a key file: run `loom serve` against that file once on a loopback port
-   with a temporary `SUBSTRATE_CONFIG` setting the port, `POST /api/setup`, create a key, stop, and point
-   `mcp.stdio_token_file` at it. The bootstrap command replaces this.
+3. **PENDING (offline identity bootstrap, precondition):** a project-local database used only over stdio should not
+   need an owner or keys once local trust lands. Until then each checkout gets its key file from the bootstrap run in
+   that checkout, before any `loom mcp` starts on it, and `mcp.stdio_token_file` points at it. There is no workaround
+   with `loom serve` and `POST /api/setup`, not even once on a loopback port: a laptop checkout is migrated only after
+   the bootstrap exists.
 4. Update the session's MCP config: new `loom` binary path, `-db` to `loom.db`, `mcp.stdio_token_file` (until local
    trust).
 5. Verify in that checkout: `loom status`, then an agent session lists tools.
 
-An unmigrated checkout is not harmed by the new binary: `loom mcp` stops at start with the message naming
+The laptop is not under `fleet-install` (its binary is `~/go/bin/loom`); a darwin target in `deploy.yaml` is a later
+choice. An unmigrated checkout is not harmed by the new binary: `loom mcp` stops at start with the message naming
 `loom migrate-data` and changes nothing. **Rollback** per checkout: use the old binary with the old `main.db`.
 
 ## 4. After
@@ -112,13 +171,19 @@ An unmigrated checkout is not harmed by the new binary: `loom mcp` stops at star
 
 | Surface | Downtime |
 |---|---|
-| The served instance | under a minute |
+| The served instance | under a minute (stop to healthy, estimate from the rehearsed migration time plus restart) |
 | The Tether child | one restart of the child |
+| **Loom tools unavailable to agents** (`loom_*` fail), sections 1 and 2 together | **about 10 minutes (estimate, not measured)**: from the child's stop (step 1.2) to the verified restart (step 2.3). The service part is the minute above; the rest is the bootstrap, deploy, first checks and the Tether-side launch change, which the driver applies. Preparing that change in advance, to apply the moment step 1.7 passes, brings it nearer 5 minutes. |
 | Each laptop checkout | the time its sessions are closed, a few minutes |
 
 ## Open items
 
 - Who calls the service on the loopback port (step 0.4).
-- Local stdio trust and the offline identity bootstrap (framework, pending): steps 1.6, 2.1, 3.3.
+- The offline identity bootstrap, a precondition (framework, pending): steps 1.5, 3.3. Local stdio trust: step 2.1.
 - Whether a gateway-launched child counts as local (decision with the Framework Agent).
-- The deploy mechanism for the server host (an installer or a manual release swap) is the service owner's.
+- A build workflow that publishes the tarball with `deploy.yaml` (Basalisk's `build.yml` calls the shared
+  `go-app-build.yml`); Loom's CI is `ci.yml` only. Without it `deploy.yaml` (PR #16) cannot be used. Not written yet.
+- Installer behaviour I could not check without running it (instructed not to): whether it reloads systemd after
+  writing the drop-in, and what it records as "previous" when `~/.local/bin/loom` is a regular file.
+- A concurrent first start on an empty file can lose a race in one process (library behaviour); worked around by
+  order, not fixed.
