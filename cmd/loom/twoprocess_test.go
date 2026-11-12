@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -159,15 +160,19 @@ func (h *host) service() *exec.Cmd {
 	return nil
 }
 
-// child runs `loom mcp --no-project -db <db>` with the token in a file, sends one tools/call and
+// child runs `loom mcp --no-project [-db <db>]` with the token in a file (none: local trust), sends one tools/call and
 // returns the reply line and how long the call took. extraArgs go before -db.
 func (h *host) child(token, tool string, args map[string]any, extraArgs ...string) (string, time.Duration, error) {
 	h.t.Helper()
-	tokenFile := filepath.Join(h.home, "stdio.token")
-	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
-		h.t.Fatal(err)
+	if token == "" { // no token: the child runs under local filesystem trust
+		h.writeConfig("")
+	} else {
+		tokenFile := filepath.Join(h.home, "stdio.token")
+		if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+			h.t.Fatal(err)
+		}
+		h.writeConfig("mcp:\n  stdio_token_file: " + tokenFile + "\n")
 	}
-	h.writeConfig("mcp:\n  stdio_token_file: " + tokenFile + "\n")
 	argv := append([]string{"mcp", "--no-project"}, extraArgs...)
 	if !h.noDB {
 		argv = append(argv, "-db", h.db())
@@ -233,15 +238,15 @@ func (h *host) child(token, tool string, args map[string]any, extraArgs ...strin
 // database, and writes no second key.
 func TestChildWithoutDBSharesTheServiceKeyAndFile(t *testing.T) {
 	h := newHost(t)
+	key := h.owner()
 	h.service()
-	_, key := h.owner()
 	serviceKey := filepath.Join(h.dataDir(), "identity-signing.key")
 	before, err := os.ReadFile(serviceKey) //nolint:gosec // a path inside this test's temp home
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.noDB = true
-	line, _, err := h.child(key, "loom_template_put", map[string]any{"name": "from-child", "generator": "wiki_page", "body": "x"})
+	line, _, err := h.child("", "loom_template_put", map[string]any{"name": "from-child", "generator": "wiki_page", "body": "x"})
 	if err != nil || isToolError(line) {
 		t.Fatalf("child without -db: %v %s", err, line)
 	}
@@ -264,56 +269,76 @@ func TestChildWithoutDBSharesTheServiceKeyAndFile(t *testing.T) {
 	}
 }
 
-// owner signs the first owner up on the running service and returns a session and a write key.
-func (h *host) owner() (*session, string) {
+// owner is the offline bootstrap, run before any server: `loom identity setup` (password on
+// stdin) and `loom identity key create --stdout`. It returns the key. It writes the database, the
+// signing key and the owner exactly where the service will look for them.
+func (h *host) owner() string {
 	h.t.Helper()
-	s := newSession(h.t, "http://"+h.addr)
-	s.want(http.StatusOK, "POST", "/api/setup", map[string]any{"display_name": "Owner", "username": "owner", "password": "correct horse battery staple"})
-	out := s.want(http.StatusCreated, "POST", "/api/identity/keys", map[string]any{"name": "stdio", "scopes": []string{"loom.mcp", "loom.read", "loom.write"}})
-	key, _ := out["key"].(string)
-	if key == "" {
-		h.t.Fatalf("no key in %v", out)
+	setup := h.command("--no-project", "identity", "setup", "--username", "owner")
+	setup.Stdin = strings.NewReader(ownerPassword + "\n")
+	if out, err := setup.CombinedOutput(); err != nil {
+		h.t.Fatalf("identity setup: %v\n%s", err, out)
 	}
-	return s, key
+	create := h.command("--no-project", "identity", "key", "create", "--name", "stdio", "--scope", "loom.mcp", "--scope", "loom.read", "--scope", "loom.write", "--stdout")
+	var stderr syncBuf
+	create.Stderr = &stderr
+	out, err := create.Output()
+	if err != nil {
+		h.t.Fatalf("identity key create: %v\n%s", err, stderr.String())
+	}
+	key := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(key, "key_") {
+		h.t.Fatalf("identity key create printed %q", out)
+	}
+	return key
 }
 
 func isToolError(line string) bool {
 	return strings.Contains(line, `"isError":true`) || strings.Contains(line, `"error":`)
 }
 
-// (a) and (b): the default workspace's database directory is not the data directory, so the
-// service and an explicit-`-db` child keep two different signing keys; a key created through the
-// service is a database row and authenticates on both transports regardless.
-func TestServiceAndDBChildKeepTwoKeysButShareCredentials(t *testing.T) {
+// (a), (b) and the second-issuer guard: the default workspace's database directory is not the data
+// directory, so a child launched with -db <that file> would look for its signing key beside the
+// database, not where the service keeps it. The framework refuses to create a signing key when the
+// database already holds users and no key file exists where the config points, so the wrongly
+// launched child stops instead of quietly becoming a second issuer.
+func TestChildWithDBRefusesToBecomeASecondIssuer(t *testing.T) {
 	h := newHost(t)
-	h.service()
-	_, key := h.owner()
-
+	h.owner()
 	if h.dataDir() == h.workspaceDir() {
-		t.Fatal("the data directory and the default workspace directory are the same; the premise of the finding is gone")
+		t.Fatal("the data directory and the default workspace directory are the same; the premise is gone")
 	}
-	serviceKey := filepath.Join(h.dataDir(), "identity-signing.key")
-	if _, err := os.Stat(serviceKey); err != nil {
-		t.Fatalf("the service did not put its signing key in the data directory: %v", err)
+	if _, err := os.Stat(filepath.Join(h.dataDir(), "identity-signing.key")); err != nil {
+		t.Fatalf("the bootstrap did not put the signing key in the data directory: %v", err)
 	}
+	_, _, err := h.child("", "loom_status", map[string]any{}) // launched with -db
+	if err == nil {
+		t.Fatal("a child launched with -db against a database that has users started")
+	}
+	if !strings.Contains(err.Error(), "signing key") {
+		t.Fatalf("the child stopped, but not for the signing key: %v", err)
+	}
+	t.Logf("refused: %v", err)
+	if _, statErr := os.Stat(filepath.Join(h.workspaceDir(), "identity-signing.key")); statErr == nil {
+		t.Fatal("the refused child still wrote a signing key beside the database")
+	}
+}
 
-	// stdio: the child, pointed at the service's database, accepts the service-issued key.
+// (b): a key made offline authenticates on the service's /mcp and, given as the stdio token, on a
+// child's stdio; a wrong token is an error, never a fallback to local trust. The child is launched
+// the way the cutover launches it: the service's SUBSTRATE_CONFIG, no -db.
+func TestKeyWorksOnBothTransportsAndABadTokenDoesNotFallBack(t *testing.T) {
+	h := newHost(t)
+	key := h.owner()
+	h.service()
+	h.noDB = true
 	line, _, err := h.child(key, "loom_status", map[string]any{})
 	if err != nil || isToolError(line) {
-		t.Fatalf("stdio child with a service-issued key: %v %s", err, line)
+		t.Fatalf("stdio child with a key: %v %s", err, line)
 	}
-	childKey := filepath.Join(h.workspaceDir(), "identity-signing.key")
-	a, aErr := os.ReadFile(serviceKey) //nolint:gosec // a path inside this test's temp home
-	b, bErr := os.ReadFile(childKey)   //nolint:gosec // a path inside this test's temp home
-	if bErr != nil || aErr != nil {
-		t.Fatalf("reading the signing keys: service %v, child (expected beside the database) %v", aErr, bErr)
+	if _, _, err = h.child("key_not-a-real-key", "loom_status", map[string]any{}); err == nil {
+		t.Fatal("a child with a wrong token started; it must not fall back to local trust")
 	}
-	if len(a) == 0 || bytes.Equal(a, b) {
-		t.Fatal("expected two different signing keys (the finding); they are the same")
-	}
-	t.Logf("signing keys: service %s, child %s: different", serviceKey, childKey)
-
-	// the same key on the service's /mcp
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "loom_status", "arguments": map[string]any{}}})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+h.addr+"/mcp", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -326,23 +351,46 @@ func TestServiceAndDBChildKeepTwoKeysButShareCredentials(t *testing.T) {
 	raw, _ := io.ReadAll(res.Body)
 	_ = res.Body.Close()
 	if res.StatusCode != http.StatusOK || isToolError(string(raw)) {
-		t.Fatalf("service /mcp with the same key = %d %s", res.StatusCode, raw)
+		t.Fatalf("service /mcp with the key = %d %s", res.StatusCode, raw)
 	}
+}
 
-	// a write through the child is visible through the service: one database
-	line, _, err = h.child(key, "loom_template_put", map[string]any{"name": "from-child", "generator": "wiki_page", "body": "x"})
-	if err != nil || isToolError(line) {
-		t.Fatalf("child write: %v %s", err, line)
+// Local trust: the child needs no key file. It runs as the verified local operator, so the result
+// cache (owned by the verified principal) works: a list result too big to return inline leaves a
+// pointer, and loom_fetch_result on that pointer returns it.
+func TestLocalTrustChildNeedsNoKeyAndKeepsTheResultCache(t *testing.T) {
+	h := newHost(t)
+	h.owner()
+	h.noDB = true
+	for i := range 40 {
+		line, _, err := h.child("", "loom_bundle_put", map[string]any{"slug": fmt.Sprintf("bundle-%02d", i), "title": strings.Repeat("title ", 8)})
+		if err != nil || isToolError(line) {
+			t.Fatalf("local-trust write %d: %v %s", i, err, line)
+		}
 	}
-	get, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+h.addr+"/api/templates/from-child", nil)
-	get.Header.Set("Authorization", "Bearer "+key)
-	res, err = http.DefaultClient.Do(get)
+	line, _, err := h.child("", "loom_bundle_list", map[string]any{})
+	if err != nil || isToolError(line) {
+		t.Fatalf("local-trust list: %v %s", err, line)
+	}
+	m := regexp.MustCompile(`wiki_result://([A-Za-z0-9-]+)`).FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("a large list left no result pointer (no verified principal, or the result was not cached): %s", line)
+	}
+	line, _, err = h.child("", "loom_fetch_result", map[string]any{"id": m[1]})
+	if err != nil || isToolError(line) {
+		t.Fatalf("fetching the cached result as the same local principal: %v %s", err, line)
+	}
+}
+
+// A local-trust child holds exactly loom.mcp, loom.read and loom.write; nothing else is granted by
+// the "*" default. (The scope list is set in code at the call site, not from config.)
+func TestLocalTrustScopesAreListed(t *testing.T) {
+	src, err := os.ReadFile("serve.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("the service does not see the child's write: %d", res.StatusCode)
+	if !strings.Contains(string(src), `LocalScopes: []string{"loom.mcp", "loom.read", "loom.write"}`) {
+		t.Fatal("serve.go does not pass an explicit LocalScopes list to mcp.ServeStdio")
 	}
 }
 
@@ -354,10 +402,14 @@ func raceStart(t *testing.T, h *host) (svc *exec.Cmd, svcLog, childLog string) {
 	var sl, cl syncBuf
 	svc = h.command("serve", "--no-project")
 	svc.Stdout, svc.Stderr = &sl, &sl
-	kid := h.command("mcp", "--no-project", "-db", h.db())
+	kidArgs := []string{"mcp", "--no-project"}
+	if !h.noDB {
+		kidArgs = append(kidArgs, "-db", h.db())
+	}
+	kid := h.command(kidArgs...)
 	kid.Stderr = &cl
 	kid.Stdin = strings.NewReader("")
-	h.writeConfig("") // no stdio token: the child ends with the token error once it has started
+	h.writeConfig("") // local trust; the child ends at once (stdin is closed) once it has started
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	t.Cleanup(func() { // whatever path the test leaves by, no process outlives it
@@ -436,24 +488,25 @@ func (h *host) integrity() {
 	}
 }
 
-// (c), the first start: both processes meet an empty file and both run the migrations. This is
-// NOT safe: one of them can lose the race and exit (database is locked, or the other already
-// created the tables). The test pins down what is guaranteed instead: the file is never left
-// damaged, and a lone start afterwards comes up. The cutover plan therefore never starts the two
-// together on an empty file (migrate-data creates the schema first; the service starts before
-// the child).
-func TestConcurrentFirstStartLeavesAUsableFile(t *testing.T) {
-	lost := 0
-	const rounds = 5
+// raceRounds starts the service and a child (the cutover's launch: same config, no -db) at the
+// same moment, rounds times, each round on a fresh host. With premigrated the file already exists,
+// migrated, with its signing key (what migrate-data plus the bootstrap leave); otherwise it is
+// empty. Simultaneous starts are NOT safe either way (see the tests below): the assertion is that
+// the file is never damaged and a lone start afterwards comes up, and the outcome is logged.
+func raceRounds(t *testing.T, rounds int, premigrated bool) (lost int) {
+	t.Helper()
 	for round := range rounds {
 		h := newHost(t)
-		if err := os.MkdirAll(h.workspaceDir(), 0o750); err != nil {
+		h.noDB = true
+		if premigrated {
+			h.owner()
+		} else if err := os.MkdirAll(h.workspaceDir(), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		svc, svcLog, childLog := raceStart(t, h)
 		survived := h.answers()
 		stop(svc)
-		childOK := strings.Contains(childLog, "needs a token")
+		childOK := strings.Contains(childLog, "local filesystem trust")
 		if !survived || !childOK {
 			lost++
 		}
@@ -473,22 +526,35 @@ func TestConcurrentFirstStartLeavesAUsableFile(t *testing.T) {
 		stop(lone)
 		h.integrity()
 	}
-	t.Logf("%d of %d concurrent first starts lost the race in at least one process", lost, rounds)
+	t.Logf("%d of %d simultaneous starts lost the race in at least one process", lost, rounds)
+	return lost
 }
 
-// (c), every later start: the file is already migrated (which migrate-data, or one earlier
-// start, guarantees), and the identity key exists. Both processes may then start at the same
-// moment and neither may fail.
-func TestConcurrentStartOnMigratedFile(t *testing.T) {
+// (c), the first start: both processes meet an empty file and both run the migrations and create
+// the signing key. NOT safe: one of them can lose at open (database is locked) or at the
+// migration, or the two collide on the key's files. The cutover never starts the two together on
+// an empty file (migrate-data creates the schema, the bootstrap the key and the owner first).
+func TestConcurrentFirstStartLeavesAUsableFile(t *testing.T) { raceRounds(t, 5, false) }
+
+// (c), a start on a migrated file with its key: simultaneous starts can still collide, because
+// both processes rewrite the key's JWKS file (write a temp file, rename it), so the order is the
+// rule here too: the service first, the child once the service answers.
+func TestSimultaneousStartOnAMigratedFileLeavesAUsableFile(t *testing.T) { raceRounds(t, 3, true) }
+
+// (c), the order that is the rule: the child starts, and restarts, while the service is running.
+// This is what the gateway does when the child exits and is started again.
+func TestChildStartsAndRestartsWhileTheServiceRuns(t *testing.T) {
 	h := newHost(t)
-	first := h.service()
-	stop(first)
-	for round := range 3 {
-		svc, svcLog, childLog := raceStart(t, h)
-		up := h.answers()
-		stop(svc)
-		if !up || !strings.Contains(childLog, "needs a token") {
-			t.Fatalf("round %d: concurrent start on a migrated file failed (service up=%v)\nservice: %s\nchild: %s", round, up, svcLog, childLog)
+	h.noDB = true
+	h.owner()
+	h.service()
+	for i := range 3 {
+		line, _, err := h.child("", "loom_status", map[string]any{})
+		if err != nil || isToolError(line) {
+			t.Fatalf("child start %d while the service runs: %v %s", i, err, line)
+		}
+		if !h.answers() {
+			t.Fatalf("the service stopped answering after child start %d", i)
 		}
 	}
 	h.integrity()
@@ -522,15 +588,16 @@ func holdWrite(t *testing.T, path string, d time.Duration) (locked <-chan struct
 	return ch
 }
 
-// (d): a write through the child while another connection holds the write lock waits for it and
-// succeeds.
+// (d): a write through the child while another connection holds the write lock waits for it (up to
+// the 5s busy timeout) and succeeds if the lock is released in time; past that it fails busy.
 func TestChildWriteWaitsForTheWriteLock(t *testing.T) {
 	h := newHost(t)
+	h.owner()
 	h.service()
-	_, key := h.owner()
+	h.noDB = true
 
 	put := func(name string) (string, time.Duration, error) {
-		return h.child(key, "loom_template_put", map[string]any{"name": name, "generator": "wiki_page", "body": "x"})
+		return h.child("", "loom_template_put", map[string]any{"name": name, "generator": "wiki_page", "body": "x"})
 	}
 	if line, _, err := put("warm"); err != nil || isToolError(line) {
 		t.Fatalf("an unlocked write failed: %v %s", err, line)
@@ -546,15 +613,20 @@ func TestChildWriteWaitsForTheWriteLock(t *testing.T) {
 	}
 	t.Logf("write during a 1.5s hold: waited %s and succeeded", took.Round(10*time.Millisecond))
 
-	// A hold longer than the 5s busy timeout is still waited out: WriteTx restarts the transaction
-	// on busy (up to 5 attempts), so the bound is about 25s, not 5s.
-	<-holdWrite(t, h.db(), 7*time.Second)
-	line, took, err = put("waited-longer")
-	if err != nil || isToolError(line) {
-		t.Fatalf("a write during a 7s lock failed: %v %s", err, line)
+	// A hold longer than the 5s busy timeout is NOT waited out: a single-statement write goes through
+	// the one write connection directly (not Store.WriteTx, which is the only thing that retries
+	// on busy), so it waits the busy timeout once and then fails with SQLITE_BUSY.
+	<-holdWrite(t, h.db(), 8*time.Second)
+	line, took, err = put("too-late")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if took < 6*time.Second {
-		t.Fatalf("the write took %s: it did not wait for the lock", took)
+	if !isToolError(line) || !strings.Contains(line, "SQLITE_BUSY") {
+		t.Fatalf("a write during an 8s lock was expected to fail busy after the 5s timeout, got %s after %s", line, took)
 	}
-	t.Logf("write during a 7s hold: waited %s and succeeded", took.Round(100*time.Millisecond))
+	if took < 4*time.Second || took > 7*time.Second {
+		t.Fatalf("the busy failure came after %s, not about the 5s busy timeout", took)
+	}
+	t.Logf("write during an 8s hold: failed busy after %s", took.Round(100*time.Millisecond))
+	time.Sleep(4 * time.Second) // let the hold end before the host is torn down
 }
