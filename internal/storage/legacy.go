@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -103,6 +105,11 @@ func MigrateLegacy(ctx context.Context, from, to string) (MigrateReport, error) 
 		cleanup()
 		return rep, fmt.Errorf("migrate: schema: %w", err)
 	}
+	before, err := fingerprint(from)
+	if err != nil {
+		cleanup()
+		return rep, err
+	}
 	if err = copyTables(ctx, st.DB(), from); err != nil {
 		cleanup()
 		return rep, err
@@ -110,6 +117,22 @@ func MigrateLegacy(ctx context.Context, from, to string) (MigrateReport, error) 
 	if err = verify(ctx, st.DB(), from, rep.Counts); err != nil {
 		cleanup()
 		return rep, err
+	}
+	if afterChecksHook != nil {
+		afterChecksHook()
+	}
+	// The old file is opened without locks when it has no WAL content (see readOnlyURI), so a
+	// writer running on it could be read mid-change and the content check would compare the
+	// copy with the same torn read. If the old files are not exactly as they were before the
+	// copy, nothing is installed.
+	after, err := fingerprint(from)
+	if err != nil {
+		cleanup()
+		return rep, err
+	}
+	if after != before {
+		cleanup()
+		return rep, errors.New("migrate: the old database changed during the migration; stop whatever is writing to it and run again")
 	}
 	// Fold the WAL into the file so the rename moves one complete database.
 	if _, err = st.DB().ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
@@ -129,6 +152,39 @@ func MigrateLegacy(ctx context.Context, from, to string) (MigrateReport, error) 
 	}
 	rep.Duration = time.Since(start)
 	return rep, nil
+}
+
+// afterChecksHook is called between the checks and the second fingerprint; tests use it to write
+// to the old file at that moment.
+var afterChecksHook func()
+
+// fingerprint is the size, modification time and sha256 of the old database and of its -wal and
+// -journal files (absent files count as absent). The files here are small, so hashing costs
+// nothing; an app with a large file would compare size and modification time only.
+func fingerprint(path string) (string, error) {
+	var b strings.Builder
+	for _, f := range []string{path, path + "-wal", path + "-journal"} {
+		info, err := os.Stat(f)
+		if errors.Is(err, os.ErrNotExist) {
+			b.WriteString(f + ": absent\n")
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("migrate: inspect %s: %w", f, err)
+		}
+		fh, err := os.Open(f) //nolint:gosec // the operator names the old database
+		if err != nil {
+			return "", fmt.Errorf("migrate: read %s: %w", f, err)
+		}
+		h := sha256.New()
+		_, cerr := io.Copy(h, fh)
+		_ = fh.Close()
+		if cerr != nil {
+			return "", fmt.Errorf("migrate: read %s: %w", f, cerr)
+		}
+		fmt.Fprintf(&b, "%s: %d %d %x\n", f, info.Size(), info.ModTime().UnixNano(), h.Sum(nil))
+	}
+	return b.String(), nil
 }
 
 func hasLegacyLayout(path string) (bool, error) {
