@@ -1,7 +1,8 @@
 # Cutover plan: running Loom moves to the Substrate build
 
-Status: **draft for the owner's approval. Nothing here has been run.** Merging the port (PR #13, merge commit
-`18568a0`) changed no running system. This plan is the separate step that does.
+Status: **done for the server host (2026-11-12, 18:00 to 18:18 UTC)**; see "Outcome" below. The laptop's
+project-local checkouts (section 3) have not been migrated by this plan and remain per-checkout, on their own schedule.
+The text below is the plan as it was written and rehearsed, kept as the record and for the next release.
 
 **Pre-merge `main`: `be38c7e`** ("Docs: state the release posture for tokenless loopback"). That is the last commit
 of the old version. A fix to the running version is cut from `be38c7e`, not from `main`, until the cutover is done.
@@ -13,6 +14,28 @@ rollbacks).
 `loom identity key create` run with no server, and `loom mcp` runs under local filesystem trust. The steps below use
 them, and the whole plan was rehearsed end to end on a scratch copy (see "Rehearsal at `d453ac8`"). The cutover still
 needs the owner's approval, and it does not start without the bootstrap: nothing here opens a setup window.
+
+## Outcome: server host, 2026-11-12
+
+Variant A of section 1, step 2 (one hub reload), from the build of `main` at `9672900`:
+
+- **Service (18:00 UTC).** Down 12 seconds. `loom --no-project migrate-data --all`: 1 bundle, 1 template,
+  `integrity_check` and `foreign_key_check` ok, old file untouched. Owner created offline. `fleet-install` deployed
+  (it kept the old binary as `loom.pre-fleet-install` and did reload systemd). Setup closed over HTTP, an unknown
+  `Host` refused (403), sign-in 200, bundles, templates and status 200 signed in and 401 without, both proxy names
+  answered. The old child stayed attached through all of it and the checksums of the old `main.db` were unchanged.
+  Not checked at that point: a write through the service and the `/mcp` tool list (`/mcp` through a proxy name
+  answers 403 `invalid Host header`, an open item below).
+- **Tether side (18:13 to 18:18 UTC).** The owner approved the re-planned gateway entry, Agent Ops applied it, and
+  the owner reloaded the hub at 18:18. Checked afterwards: the new loom child runs **without `-db`**, against the
+  migrated database, with the service's config; `loom_status`, a list and a write through the gateway work; the old
+  database file is unchanged. The no-write notice was lifted. **The `loom_*` tools were down from 18:13 to 18:18.**
+  The separate Tether deploy (CW-0059) was not part of this reload.
+- **Lesson: a catalog plan does not survive a hub restart.** The gateway entry is changed by a catalog plan, and a
+  hub restart discards a plan that has not been applied. The order is: **approve, apply, then reload**, never reload
+  to "pick up" a plan that is still waiting. (Section 2's reload step is to be read with that order.)
+- Left as recorded: the live binary carries a `+dirty` version stamp until its next deploy (fixed in the build by
+  PR #23); per-agent identity for the shared child is CW-20261112-0120.
 
 ## What runs today (from the owner side; the live instance was not opened or copied)
 
