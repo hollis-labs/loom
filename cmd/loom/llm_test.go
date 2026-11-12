@@ -31,7 +31,7 @@ func startApp(t *testing.T, override string) *module.App {
 		file = writeOverride(t, override)
 		t.Setenv("SUBSTRATE_CONFIG", file)
 	}
-	run, err := startModules(t.Context(), layout, false)
+	run, err := startModules(t.Context(), layout)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ func startedWith(t *testing.T, owner bool) string {
 	// port 0 asks for a free one
 	t.Setenv("SUBSTRATE_CONFIG", writeOverride(t, "httphost:\n  addr: 127.0.0.1:0\n"))
 	ctx, cancel := context.WithCancel(context.Background())
-	run, err := startModules(ctx, layout, false)
+	run, err := startModules(ctx, layout)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestMigrateDataThenStart(t *testing.T) {
 	}
 	_ = old.Close()
 
-	if _, err = startModules(t.Context(), layout, false); err == nil || !strings.Contains(err.Error(), "migrate-data") {
+	if _, err = startModules(t.Context(), layout); err == nil || !strings.Contains(err.Error(), "migrate-data") {
 		t.Fatalf("start on unmigrated data: err = %v, want a refusal naming migrate-data", err)
 	}
 	var out bytes.Buffer
@@ -273,7 +273,7 @@ func TestMigrateDataThenStart(t *testing.T) {
 	if err = migrateData(context.Background(), layout, false, nil, &out); err == nil {
 		t.Fatal("second migrate-data run accepted")
 	}
-	run, err := startModules(t.Context(), layout, false)
+	run, err := startModules(t.Context(), layout)
 	if err != nil {
 		t.Fatal(err)
 	}

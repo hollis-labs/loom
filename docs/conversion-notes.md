@@ -457,3 +457,11 @@ the writer and reads through `Reader()` (`storage.NewRepositoryRW`), so a read n
 Tests: `TestEveryRouteWithOneReadConnection` and `TestEveryToolWithOneReadConnection` run every GET route (four
 at once, beside writes) and every MCP tool against a store whose read pool is one connection, under a deadline.
 (The database module has no read-pool setting, so Loom runs the default of four.)
+
+## Which commands create nothing
+
+The rule is narrower than "reads". Help, version, `path`, `config`, `health`, and `status` in a directory with no
+migrated database start no module that opens or creates a file. The data commands (`mcp`, `compile`, `jobs`,
+`bundles`, `templates`, `pages`, `ingest`, `export`, `directives`) are listed whole and boot the database, so a read
+subcommand such as `loom bundles list` in a directory with no database still creates one (and the signing key
+beside it). The old Loom did the same. Tested by `TestReadOnlyCommandsCreateNothing` (cmd/loom/readonly_test.go).

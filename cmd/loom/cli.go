@@ -555,16 +555,23 @@ func (l *loom) directivesLedgerCLI(ctx context.Context, args []string) error {
 	}
 }
 
-func pathCLI(args []string) error {
-	layout, err := resolveLayout(args)
-	if err != nil {
-		return err
-	}
-	entries := layout.Describe()
+// pathCLI describes the resolved layout, from the same data options the other commands got, and
+// creates nothing.
+func (l *loom) pathCLI([]string) error {
+	entries := l.layout.Describe()
 	for _, entry := range entries {
 		fmt.Printf("%s\t%s\n", entry.Label, entry.Value)
 	}
 	return nil
+}
+
+// noDatabaseStatus is `loom status` where no database exists yet: it says so and creates nothing.
+func noDatabaseStatus(path string, out io.Writer) error {
+	return json.NewEncoder(out).Encode(map[string]any{
+		"status":   "no_database",
+		"database": path,
+		"next":     "no database exists here yet; `loom migrate-data` converts an old one, and serve, mcp or a command that writes data creates a new one",
+	})
 }
 
 func (l *loom) statusCLI(ctx context.Context) error {
@@ -606,7 +613,12 @@ func splitAppArgs(args []string) ([]string, []string, error) {
 	return cmdArgs, appArgs, nil
 }
 
-func resolveLayout(args []string) (paths.Layout, error) {
+// resolveLayout resolves the data layout and creates its directories (the commands that write
+// need them). layoutFor with materialize false resolves without creating anything: help, version,
+// path, status and migrate-data must leave the tree as they found it.
+func resolveLayout(args []string) (paths.Layout, error) { return layoutFor(args, true) }
+
+func layoutFor(args []string, materialize bool) (paths.Layout, error) {
 	fs := flag.NewFlagSet("app", flag.ExitOnError)
 	dbPath := fs.String("db", "", "sqlite database path")
 	project := fs.Bool("project", true, "use project-local .loom paths")
@@ -614,6 +626,9 @@ func resolveLayout(args []string) (paths.Layout, error) {
 	workspace := fs.String("workspace", "", "workspace name")
 	_ = fs.Parse(args)
 	var opts []paths.Option
+	if !materialize {
+		opts = append(opts, paths.WithoutMaterialize())
+	}
 	if *noProject {
 		*project = false
 	}
