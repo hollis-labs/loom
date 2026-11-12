@@ -140,15 +140,101 @@ Every caller of the old API changes how it authenticates; the paths and bodies s
 
 ## For the frontend
 
-- **Errors** are `{code, message, details?}`, not plain text. Read `message`. A 401 means sign in (there is no token
-  prompt any more).
-- **Writes** must send `X-Requested-With` (any non-empty value) on every `POST` and `PUT`. Browsers send `Origin`
-  themselves and it must be the page's own.
-- **Sign-in:** `GET /api/setup` reports `setup_required`; `POST /api/setup {display_name, username, password}` makes the
-  owner and signs in; `POST /api/login {username, password}` signs in; `POST /api/logout` ends the session. The
-  identity module has no UI: the setup and sign-in screens are the app's.
-- **Scopes:** a user without `loom.read` gets 403 on every API route; without `loom.write` on every change.
-- **Dev proxy:** the backend default port is 8080; set `httphost.addr` in the `SUBSTRATE_CONFIG` file to move it.
+Everything the Sysop UI needs to build against, without asking the backend. Verified on a real binary of this branch
+unless marked otherwise.
+
+**Run it.** `make run` (or `go run ./cmd/loom serve --no-project`) with a `SUBSTRATE_CONFIG` file naming the port
+(`httphost:` then `addr: "127.0.0.1:<port>"`; use an absolute path to the file). The default is `127.0.0.1:8080`;
+`vite.config.ts` proxies `/api` to 8080, so change the proxy target if the port moves. `make ui-dev` runs Vite. With
+`-db <file>` or `--no-project` the data (database, identity key, secrets) sits beside that file; without them it is
+project-local `.loom/` or the XDG data directory. Use a temp directory and an explicit `-db` for development, never a
+real data directory. Dev browser origin through the Vite proxy: writes are checked against the page's own `Origin`
+and `Host`; the proxy forwards `Host` as the Vite host, which is loopback and passes the Host check (not yet tried in
+a real browser). If a proxy changes the origin, list it in `identity.allowed_origins`.
+
+**Sign-in flow (identity module, canonical paths, no `/api/identity/login`).**
+- `GET /api/setup` (public) -> `{"setup_required": bool}`.
+- `POST /api/setup {display_name, username, password}` (public) -> 200 profile + session cookie; `409 setup_closed`
+  once an owner exists. The owner holds scope `*`.
+- `POST /api/login {username, password}` (public) -> 200 profile + cookie; `401 invalid_login` (a bad credential: show it
+  on the form, it is not "session ended"); `429 rate_limited` (five failures in five minutes for a user and address;
+  the sixth answers 429 and so does the correct password until the window passes; no `Retry-After`, show "wait a few
+  minutes").
+- `POST /api/logout` -> 204, cookie cleared. `PUT /api/password {current_password, new_password}` -> 204 and every
+  other session ends; wrong current password is `401 invalid_login` (not a signed-out state); `403 user_required`
+  for an API key; `400 invalid_request` with the reason in `message`. Minimum password length is the server's
+  (`identity.min_password`): show the server's message.
+- Profile = `{id, username, display_name, email, scopes}`. There is no read route for the signed-in caller yet
+  (`GET /api/identity/profile` answers 401/403 `route_not_mapped`; a framework addition is planned). After a reload the
+  UI does not know the profile: treat any `401 unauthorized` as signed out.
+- Also under `/api/identity/`: `PUT profile`, `GET sessions` and `DELETE sessions/{id}`, `GET|POST users` and
+  `PUT users/{id}` (administrators: `loom.admin`), `GET|POST keys` and `DELETE keys/{id}`, `POST pairing-codes`,
+  `GET jwks`; `POST /api/pair`, `POST /api/token` for machines. The cookie is HttpOnly, SameSite=Strict; the UI never
+  sees it. Session life: the manifest sets 12h.
+- Key creation `POST /api/identity/keys {name, scopes, audiences?, ttl_hours?}` -> 201 `{key: "key_...", credential}`;
+  the key is shown once. `GET keys` -> `{"keys": [...]}`, and an empty list is `{"keys": null}` (treat null as empty);
+  revoked keys vanish. The key, pairing-code and user routes need the app's admin scope, `loom.admin` (the app name plus `.admin`);
+  the owner holds `*`, which covers it. Treat a 403 `scope_required` as "denied". (Per the identity contract in Torque
+  CW-20261112-0080, comments 23312 and 23321; the `GET /api/identity/profile` route and the exact scope check on
+  `keys` were not exercised on this branch.)
+
+**Errors.** Every non-2xx `/api/` response is `{"code": "...", "message": "...", "details"?}`. Show `message`. Codes seen:
+`unauthorized` 401 (no or bad credential: the signed-out signal), `invalid_login` 401, `scope_required` 403 (the
+credential lacks the route's scope), `route_not_mapped` 403 (a path no scope table declares; fail closed), `csrf` 403 (a
+cookie-authenticated write without `X-Requested-With`), `bad_origin` 403 (a write with a foreign `Origin`),
+`user_required` 403, `rate_limited` 429, `setup_closed` / `exists` 409, `not_found` 404, `bad_request` /
+`invalid_request` 400, `internal_error` 500. The Host check answers 403 with the same flat body for an unknown
+`Host`. `/mcp` errors are the MCP endpoint's own shape (`{"error": {code, message}}`), not this one.
+
+**Writes.** Every `POST`, `PUT` and `DELETE` made with the session cookie must send `X-Requested-With` (any non-empty
+value, `XMLHttpRequest` by convention) and the browser's own `Origin` (browsers add it). A request with a bearer key
+is not subject to that.
+
+**Scopes.** `loom.read` for every GET, `loom.write` for every POST and PUT below, `loom.mcp` for `/mcp`. The first
+owner has `*`. A signed-in user without a route's scope gets 403 `scope_required`; there is no UI for scopes beyond
+what the identity routes return. API paths and bodies are unchanged from the old Loom apart from auth and errors.
+
+| Method | Path | Scope |
+|---|---|---|
+| GET | `/api/status` | `loom.read` |
+| GET, POST | `/api/bundles` | read, write |
+| GET, PUT | `/api/bundles/{slug}` | read, write |
+| GET | `/api/bundles/{slug}/pages`, `/links`, `/verifications`, `/conformance` | read |
+| GET, POST | `/api/bundles/{slug}/compile-jobs` | read, write |
+| POST | `/api/bundles/{slug}/export` | write |
+| GET | `/api/pages` | read |
+| GET | `/api/pages/{bundle}/{slug}`, `/links`, `/verifications`, `/conformance` | read |
+| GET, POST | `/api/compile-jobs` | read, write |
+| GET | `/api/compile-jobs/{id}`, `/api/compile-jobs/{id}/events` | read |
+| GET, POST | `/api/ingest` | read, write |
+| POST | `/api/ingest/text` | write |
+| GET | `/api/ingest/{hash}` | read |
+| GET | `/api/directives`, `/api/directives/{hash}` | read |
+| POST | `/api/directives/parse`, `/api/directives/compile` | write (they are POSTs) |
+| GET, POST | `/api/templates` | read, write |
+| GET, PUT | `/api/templates/{name}` | read, write |
+| POST | `/api/templates/{name}/render` | write (a POST) |
+
+**`/mcp`.** The Streamable HTTP MCP endpoint, scope `loom.mcp`; each tool also needs `loom.read` (read-only tools) or
+`loom.write`. A browser UI does not call it. `GET /healthz` is public and answers `{status, checks}`.
+
+**How the built frontend is embedded and served.** `npm run build` writes to `internal/webui/dist/` (Vite's `outDir`),
+which `internal/webui/embed.go` embeds with `//go:embed all:dist`; `Assets()` gives the `fs.FS` to
+`httphost.Options{Assets}`. `dist/` is gitignored except `.gitkeep` (an empty tree compiles and serves nothing).
+The host serves the files and falls back to `index.html` for any path that is not a file and not an API route
+(client-side routing; an unknown `/x` returns the app shell with 200). The static files are served without a
+credential, so the sign-in screen can load; every `/api/` route except `/api/setup`, `/api/login` and `/healthz`
+requires one. Rebuild with `make ui-build` before `make build`; CI builds the frontend before `go build`.
+
+**Frontend dependency problem.** `frontend/package.json` depends on `@hollis-labs/sysop-ui` as
+`github:hollis-labs/sysop-ui#v0.9.0`, a git dependency fetched over SSH. `npm ci` failed on the migration host
+("Could not read from remote repository"), so typecheck, lint and build were never run here. Whoever builds the
+frontend needs a way to fetch it (SSH key for the host, or the package from the npm registry, which is the Substrate
+shape: `app-shell` and the kits pinned in Substrate's `bom/bom.yaml`). See `frontend/CONVERSION_NOTES.md`.
+
+**What the identity module does not provide:** screens (setup, sign-in, password, keys, pairing are the app's, or the
+planned `@hollis-labs/kit-identity` kit), a user-menu region in app-shell, a profile read route, and a published
+scope list (scopes are free strings, by convention `<app>.<verb>`).
 
 ## Data migration
 

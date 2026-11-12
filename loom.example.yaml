@@ -1,5 +1,5 @@
 # Example SUBSTRATE_CONFIG file for Loom: point the environment variable at a copy of this.
-# Every key is optional. The merge is one level deep: a nested block replaces the manifest's.
+# Every key is optional. The merge is deep: maps merge, scalars and lists replace, null removes a key.
 httphost:
   addr: "127.0.0.1:8080"
 # Needed only when `loom mcp` (stdio) is used: a file holding an API key with scope loom.mcp.
