@@ -18,21 +18,30 @@ export function JobsPage() {
   const [jobs, setJobs] = useState<CompileJob[]>([])
   const [input, setInput] = useState("# New Wiki Page\n\nAdd source material here.")
   const [error, setError] = useState("")
+  // Loads the table; `alive` says whether the page that asked is still the current one.
   const refresh = useCallback(
-    () =>
+    (alive: () => boolean = () => true) =>
       loom
         .listJobs()
-        .then((list) => setJobs(list ?? []))
-        .catch((e: unknown) => setError(messageOf(e))),
+        .then((list) => {
+          if (alive()) setJobs(list ?? [])
+        })
+        .catch((e: unknown) => {
+          if (alive()) setError(messageOf(e))
+        }),
     [],
   )
   useEffect(() => {
-    void refresh()
+    let current = true
+    void refresh(() => current)
+    return () => {
+      current = false
+    }
   }, [refresh])
   const submit = () =>
     loom
       .createJob(slug, input)
-      .then(refresh)
+      .then(() => refresh())
       .catch((e: unknown) => setError(messageOf(e)))
   if (bundlesError || error) return <ErrorState error={bundlesError || error} />
   if (!bundles) return null

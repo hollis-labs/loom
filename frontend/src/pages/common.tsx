@@ -16,16 +16,23 @@ export function useBundles() {
   const [slug, setSlug] = useState("")
   const [error, setError] = useState("")
   useEffect(() => {
+    let current = true
     loom
       .listBundles()
       .then((list) => {
+        if (!current) return
         const items = list ?? []
         setBundles(items)
         // The old UI always used this bundle; keep it as the first selection when it exists.
         const preferred = items.find((b) => b.slug === LEGACY_BUNDLE) ?? items[0]
-        setSlug((current) => current || preferred?.slug || "")
+        setSlug((prev) => prev || preferred?.slug || "")
       })
-      .catch((e: unknown) => setError(messageOf(e)))
+      .catch((e: unknown) => {
+        if (current) setError(messageOf(e))
+      })
+    return () => {
+      current = false
+    }
   }, [])
   return { bundles, slug, setSlug, error }
 }

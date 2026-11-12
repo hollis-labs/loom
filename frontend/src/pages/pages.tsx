@@ -11,14 +11,23 @@ export function PagesPage() {
   const [error, setError] = useState("")
   useEffect(() => {
     if (!slug) return
+    // A slower answer for a superseded bundle or query must not overwrite the current one.
+    let current = true
     loom
       .listPages(slug, query)
       .then((items) => {
+        if (!current) return
         const list = items ?? []
+        setError("")
         setPages(list)
-        setSelected((current) => list.find((p) => p.id === current?.id) ?? list[0] ?? null)
+        setSelected((prev) => list.find((p) => p.id === prev?.id) ?? list[0] ?? null)
       })
-      .catch((e: unknown) => setError(messageOf(e)))
+      .catch((e: unknown) => {
+        if (current) setError(messageOf(e))
+      })
+    return () => {
+      current = false
+    }
   }, [slug, query])
   if (bundlesError || error) return <ErrorState error={bundlesError || error} />
   if (!bundles) return null
