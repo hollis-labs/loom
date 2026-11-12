@@ -7,6 +7,16 @@ import { Field, Notice } from "./forms"
 const autofillNew = "new-password"
 const autofillCurrent = "current-password"
 
+/** The server's message; a 429 also says when to try again (its Retry-After). */
+function failureText(e: unknown) {
+  if (!(e instanceof Error)) return "Could not sign in."
+  if (e instanceof ApiError && e.status === 429 && e.retryAfter > 0) {
+    const minutes = Math.ceil(e.retryAfter / 60)
+    return `${e.message} Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`
+  }
+  return e.message
+}
+
 /** First-run setup (when no owner exists yet) or sign-in. Both start a session cookie. */
 export function Entry({ setup, onReady }: { setup: boolean; onReady: (name: string) => void }) {
   const [busy, setBusy] = useState(false)
@@ -36,7 +46,7 @@ export function Entry({ setup, onReady }: { setup: boolean; onReady: (name: stri
       onReady(profile?.display_name || profile?.username || "")
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setMode(false)
-      setError(e instanceof Error ? e.message : "Could not sign in.")
+      setError(failureText(e))
     } finally {
       setBusy(false)
     }

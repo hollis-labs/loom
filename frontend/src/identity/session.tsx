@@ -1,8 +1,8 @@
 import { createContext, useContext } from "react"
 
-/** What the UI knows about the signed-in caller. There is no profile read route yet. */
+/** What the UI knows about the signed-in caller (from the sign-in or GET /api/identity/profile). */
 export interface Session {
-  /** Display name, known only for a sign-in in this page's life (not after a reload). */
+  /** Display name. */
   name: string
   /** Drop back to the sign-in screen. */
   signedOut: () => void

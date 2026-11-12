@@ -48,7 +48,7 @@ function usePath() {
 }
 
 export function App() {
-  // null: not signed in. There is no profile read route, so after a reload the name is unknown.
+  // null: not signed in; otherwise the signed-in person's display name.
   const [name, setName] = useState<string | null>(null)
   const [setup, setSetup] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -66,8 +66,10 @@ export function App() {
         setSetup(state.setup_required)
         if (!state.setup_required) {
           try {
-            await request("status") // any 401 here means there is no session
-            setName("")
+            const me = await request<{ username: string; display_name?: string }>(
+              "identity/profile",
+            )
+            setName(me.display_name || me.username)
           } catch (e) {
             if (!(e instanceof ApiError && e.status === 401)) throw e
           }

@@ -40,8 +40,8 @@ The ported API serves all five (every route above is in the backend's table): no
 - The old UI hard-coded the `nanite` bundle for pages, compile and export. The three views now have a bundle picker
   over `GET /api/bundles`; the bundle named `nanite` is selected on first load when it exists (the old behaviour),
   otherwise the first. The Exports button reads "Export bundle" instead of "Export Nanite".
-- Sign-in is the identity module's cookie session. After a reload the UI probes `GET /api/status` to learn whether a
-  session exists; the display name is only known for a sign-in in the same page life (no profile read route).
+- Sign-in is the identity module's cookie session. On load the UI asks `GET /api/identity/profile`: a 401 means signed
+  out. A 429 on sign-in shows the server's message plus the `Retry-After` wait, in minutes.
 - Client URLs are real paths (`/pages`, `/jobs`, ...); the Go host's SPA fallback serves them.
 
 ## Gaps
@@ -52,9 +52,9 @@ The ported API serves all five (every route above is in the backend's table): no
    backend setting, in the `SUBSTRATE_CONFIG` file used for development):
    `identity: { allowed_origins: ["http://127.0.0.1:<vite port>"] }`. The built, embedded UI is same-origin and needs
    nothing. Decision for the driver: document this in `docs/conversion-notes.md`, or ship a dev override.
-2. **`GET /api/identity/profile` does not exist on this branch.** Both the owner and a non-admin answer
-   `403 route_not_mapped` ("verified caller identity required"). The UI therefore cannot show who is signed in after a
-   reload. Framework addition planned (CW-20261112-0080).
+2. **`GET /api/identity/profile`** (Substrate bac8c60) is used on load: it answers the signed-in person or 401, and
+   the display name is shown on the sign-out page. (On the first branch head it was `route_not_mapped`; the UI
+   probed `GET /api/status` until the pin moved.)
 3. **No sign-out / user-menu region in app-shell**, so sign-out is a `nav.footer` page with one button (interim,
    Basalisk's pattern; CW-20261112-0107).
 4. **Identity ships no UI** (setup, sign-in, password screens are app-owned until `@hollis-labs/kit-identity`).

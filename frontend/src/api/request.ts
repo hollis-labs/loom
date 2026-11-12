@@ -4,6 +4,8 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public code = "",
+    /** Seconds from the Retry-After header of a 429, when sent. */
+    public retryAfter = 0,
   ) {
     super(message)
   }
@@ -44,6 +46,7 @@ export async function request<T>(path: string, method = "GET", body?: unknown): 
       data?.message || "The request could not be completed.",
       response.status,
       code,
+      Number(response.headers.get("Retry-After")) || 0,
     )
   }
   return data as T
