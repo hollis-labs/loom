@@ -36,9 +36,12 @@ golangci-lint run          # v2.11.4
 python3 scripts/scan-public --tree
 ```
 
-and builds the frontend (`make ui-build`) first, because `go build` embeds
-whatever sits in `internal/webui/dist/`. Local runs use a free port: set
-`httphost.addr` in the file named by `SUBSTRATE_CONFIG`.
+After the frontend steps in `frontend/` (`npm ci`, `npm run typecheck`, `npm run lint`,
+`npm run build`, first, because `go build` embeds whatever sits in
+`internal/webui/dist/`), and `make build`, CI runs the browser suite
+(`npm run test:e2e` in `frontend/`, bundled Chromium via `PLAYWRIGHT_CHANNEL=chromium`,
+`LOOM_E2E_PORT`), which starts the real binary on a throwaway data directory. Local runs
+use a free port: set `httphost.addr` in the file named by `SUBSTRATE_CONFIG`.
 
 ## Boundaries
 

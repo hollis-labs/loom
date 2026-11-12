@@ -20,14 +20,15 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
       # The UI is built first: internal/webui embeds frontend/ output, and the Go tests need
-      # those assets. (frontend/ has no lint script yet: see frontend/CONVERSION_NOTES.md.)
-      - name: Build the Sysop UI
+      # those assets.
+      - name: Frontend (install, typecheck, lint, build)
         working-directory: frontend
         run: |
           npm ci
           npm run typecheck
+          npm run lint
           npm run build
       - run: go vet ./...
       - name: pins match the Substrate BOM
@@ -39,3 +40,17 @@ jobs:
       - name: hygiene (secrets, hosts, private paths; tree)
         # Tree only: the history gate returns after the program-wide history pass.
         run: python3 scripts/scan-public --tree
+      # The browser proof starts the real binary (./loom) on a throwaway data directory, so the
+      # binary is built after the frontend (it embeds the built UI) and before the suite.
+      - name: Build the binary the browser suite starts
+        run: make build
+      - name: Install the browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser suite
+        working-directory: frontend
+        env:
+          # CI installs the bundled Chromium; the config defaults to the system Chrome channel.
+          PLAYWRIGHT_CHANNEL: chromium
+          LOOM_E2E_PORT: '18080'
+        run: npm run test:e2e
