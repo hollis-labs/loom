@@ -1,0 +1,4 @@
+# scan-public allowlist: RULE-ID PATH-GLOB REASON
+#
+# Fleet inventory alias required by deploy.yaml (fleet-deploy/v1) to name the target host; not an address.
+agent-box-host deploy.yaml fleet inventory alias required by fleet-deploy/v1, not an address

@@ -1,0 +1,37 @@
+# Loom on Substrate: one binary with the console embedded, listening on 127.0.0.1:8092.
+#
+# FIRST DEPLOY (the pre-Substrate version was a plain file at ~/.local/bin/loom): the new build
+# refuses to start on the old database layout (main.db) and names `loom migrate-data`. Do not let
+# this descriptor's restart be the first thing that touches that file. docs/cutover-plan.md has
+# the order: stop the unit, run `loom migrate-data` and the offline identity bootstrap with the
+# new binary, then `fleet-install deploy loom`, whose preflight backs up the migrated loom.db.
+# The old main.db is never written, so it stays the rollback for that first move.
+#
+# Settings that were environment variables (ANTHROPIC_API_KEY, LOOM_OTEL_*) and the old --addr flag
+# are keys in the file named by SUBSTRATE_CONFIG (httphost.addr, loom.*); the drop-in below sets it.
+# The file itself is written by the operator (docs/conversion-notes.md, old-to-new table), not here.
+schema: fleet-deploy/v1
+app: loom
+repo: hollis-labs/loom
+artifact: {name: "loom-{sha12}", tarball: "loom_{version}_{os}_{arch}.tar.gz", sums: SHA256SUMS}
+targets:
+  - id: agent-os-loom
+    when: {os: linux, arch: amd64}
+    hosts: [agent-os]
+    binary: loom
+    install_root: ~/.local/share/fleet/releases/loom
+    symlinks:
+      - path: ~/.local/bin/loom            # the unit's ExecStart path; today a regular file, replaced by a symlink
+    unit_dropins:
+      - unit: loom.service
+        name: 20-fleet-exec.conf
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=%h/.local/bin/loom serve --no-project
+          Environment=SUBSTRATE_CONFIG=%h/.config/loom/loom.yaml
+    preflight:
+      - {kind: sqlite_backup, db: ~/.local/share/loom/workspaces/default/loom.db, dest: "{backup_dir}/loom.pre-{version}.db"}
+      # - {kind: migration_check, db: ~/.local/share/loom/workspaces/default/loom.db}   # enable once build-info.json exists
+    restart: {via: systemd-user, unit: loom.service}
+    health: {url: "http://127.0.0.1:8092/healthz", expect_status: [200], timeout: 30s}
