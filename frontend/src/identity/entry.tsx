@@ -1,5 +1,5 @@
 import { Button, Input } from "@hollis-labs/design-components"
-import { type FormEvent, useState } from "react"
+import { type FormEvent, useEffect, useRef, useState } from "react"
 import { ApiError, request } from "../api/request"
 import { Field, Notice } from "./forms"
 
@@ -41,8 +41,15 @@ export function SetupOffline() {
 export function Entry({ onReady }: { onReady: (name: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const errorRef = useRef<HTMLParagraphElement>(null)
+  // A failed sign-in moves focus to the announced error, so a keyboard user is not left on the
+  // page body (nothing is disabled while busy except the submit button).
+  useEffect(() => {
+    if (error) errorRef.current?.focus()
+  }, [error])
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (busy) return
     const form = event.currentTarget
     const data = new FormData(form)
     setBusy(true)
@@ -66,7 +73,7 @@ export function Entry({ onReady }: { onReady: (name: string) => void }) {
         <h1>Sign in to Loom</h1>
         <p className="text-fg-muted">Pick up where you left off.</p>
         <form onSubmit={submit} className="stack" aria-busy={busy}>
-          <fieldset disabled={busy} className="stack">
+          <div className="stack">
             <Field label="Username">
               {(id) => <Input id={id} name="username" autoComplete="username" required autoFocus />}
             </Field>
@@ -81,11 +88,11 @@ export function Entry({ onReady }: { onReady: (name: string) => void }) {
                 />
               )}
             </Field>
-            <Notice error={error} />
+            <Notice error={error} ref={errorRef} />
             <Button type="submit" disabled={busy}>
               {busy ? "Please wait…" : "Sign in"}
             </Button>
-          </fieldset>
+          </div>
         </form>
       </section>
     </main>

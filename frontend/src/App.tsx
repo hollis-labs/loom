@@ -54,6 +54,9 @@ export function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [path, navigate] = usePath()
+  // A 401 (no session at load, or one that ended) keeps the path: signing in again resumes it.
+  const sessionEnded = useCallback(() => setName(null), [])
+  // An explicit sign-out goes home, so the next sign-in does not land on the sign-out page.
   const signedOut = useCallback(() => {
     setName(null)
     navigate("/")
@@ -82,9 +85,9 @@ export function App() {
     void load()
   }, [])
   useEffect(() => {
-    window.addEventListener(UNAUTHORIZED_EVENT, signedOut)
-    return () => window.removeEventListener(UNAUTHORIZED_EVENT, signedOut)
-  }, [signedOut])
+    window.addEventListener(UNAUTHORIZED_EVENT, sessionEnded)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, sessionEnded)
+  }, [sessionEnded])
   const session = useMemo<Session | null>(
     () => (name === null ? null : { name, signedOut }),
     [name, signedOut],

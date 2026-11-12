@@ -46,6 +46,9 @@ The ported API serves all five (every route above is in the backend's table): no
   The setup form is gone.
 - Sign-in is the identity module's cookie session. On load the UI asks `GET /api/identity/profile`: a 401 means signed
   out. A 429 on sign-in shows the server's message plus the `Retry-After` wait, in minutes.
+- Sign-in: the form is `aria-busy` and only the submit button is disabled while a request runs (disabling the
+  fieldset dropped keyboard focus); a failed sign-in moves focus to the announced error. A 401 (no session at load, or
+  one that ended) keeps the URL, so signing in again resumes the same page; only an explicit sign-out goes to `/`.
 - Client URLs are real paths (`/pages`, `/jobs`, ...); the Go host's SPA fallback serves them.
 
 ## Gaps
