@@ -33,7 +33,7 @@ go vet ./...
 go run github.com/hollis-labs/substrate/cmd/substrate pins check --app .
 go test -race ./...
 golangci-lint run          # v2.11.4
-python3 scripts/scan-public --ref HEAD
+python3 scripts/scan-public --tree
 ```
 
 and builds the frontend (`make ui-build`) first, because `go build` embeds

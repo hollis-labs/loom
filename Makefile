@@ -45,7 +45,8 @@ pins:
 	$(SUBSTRATE) pins check --app .
 
 scan:
-	python3 scripts/scan-public --ref HEAD
+	# Tree only: the history gate returns after the program-wide history pass.
+	python3 scripts/scan-public --tree
 
 # Regenerate the wiring file after editing cmd/loom/substrate.yaml.
 generate:

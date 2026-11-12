@@ -8,16 +8,22 @@ every workspace database is migrated with no loss by `loom migrate-data` (below)
 
 Things Substrate did not provide, or choices that need the owner. Each says what was done.
 
-1. **Identity has no offline bootstrap, so a stdio-only `loom mcp` cannot get its key without a server. OPEN, needs a
-   decision.** In `enforce` mode `loom mcp` must present an API key (`mcp.stdio_token_file`), and a key can only be
-   created through the identity module's HTTP API by a signed-in administrator. Loom's main agent use is
-   `loom mcp` spawned by an MCP host against a project-local `.loom/` database, often with no server running.
-   Today that means: run `loom serve` once on that database, `POST /api/setup`, create a key with
-   `POST /api/identity/keys`, save it to a file, point `mcp.stdio_token_file` at it. The same applies to every
-   project-local database. Options: (a) accept this; (b) a Substrate command to create the first owner and a key
-   offline (`substrate`-provided CLI on the identity module); (c) a per-app way to run stdio under a local-file
-   trust (not available: `auth.mode` is per process, and `off` would also open `/api/`). I did (a) and did not
-   invent (b) or (c).
+1. **Identity has no offline bootstrap, so a stdio-only `loom mcp` cannot get its key without a server. DECIDED by the
+   owner; framework change pending.** In `enforce` mode `loom mcp` must present an API key (`mcp.stdio_token_file`),
+   and a key can only be created through the identity module's HTTP API by a signed-in administrator. Loom's main
+   agent use is `loom mcp` spawned by an MCP host against a project-local `.loom/` database, often with no server
+   running. Today (option a, kept working exactly as the framework requires; the mcp module's token check is not
+   weakened or bypassed): run `loom serve` once on that database, `POST /api/setup`, create a key with
+   `POST /api/identity/keys`, save it to a file, point `mcp.stdio_token_file` at it.
+   Owner decision: a stdio MCP process started locally against a local file runs under filesystem trust, the same as
+   Loom's local CLI commands; enforced identity stays on the HTTP surfaces. The identity module also gets an offline
+   bootstrap command (create the owner and a key from the command line, no server) for served instances. Both are
+   framework changes routed to the Substrate Framework Agent; neither exists yet and Loom builds nothing ahead of
+   them. **What Loom changes when they land:** no token file for local stdio (`mcp.stdio_token_file` is dropped from
+   the launch config); a project-local database used only over stdio should not need identity tables or a signing
+   key at all (expected, to confirm with the framework change), so no identity state is created beside it; served
+   instances use the offline command for the first owner and keys; whether a gateway-launched child (Tether on
+   the server host) counts as local is being decided with the Framework Agent.
 2. **No shared Host check.** Guide section 5.7 asks the app to refuse Host headers that are not loopback or listed,
    to stop DNS rebinding, and to drop forwarding headers. Substrate has no module for it, so
    `internal/hostguard` is a copy of Basalisk's, with the flat error body and `loom.allowed_hosts`. Two copies of
@@ -40,7 +46,7 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    from remote repository" on this host, so typecheck and build were not run. Moving to `app-shell` and the
    BOM-pinned kits (from the npm registry) is the GUI track; see `frontend/CONVERSION_NOTES.md`. CI builds the UI
    before `go test`; it will stay red until that lands.
-8. **`scan-public --ref HEAD` is not clean, and part of it is in published history. OPEN, needs the owner.** 16
+8. **`scan-public --ref HEAD` is not clean, and part of it is in published history. DECIDED by the owner: the tree must be clean, history is left alone.** 16
    findings on the pre-conversion history plus tree (before any conversion commit):
    - tree and history, `internal/llm/redact_test.go`: an AWS key, a GitHub token, a JWT and a PEM header, invented
      inputs for the redaction tests (4 findings, +4 from gitleaks). **Fixed in the tree**: the test now builds them
@@ -49,9 +55,9 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    - history only: the commit message of `4f2be4b` names a build host; `.cerberus.yaml` (`d48dd40`)
      and `loom.cerberus.yaml` (`57fe127`) carry a macOS home path (`/Users/<name>`); `internal/server/security_test.go`
      (`ae90538`) carries a private IPv4 as a non-loopback test address.
-   Options: an owner-reviewed `scan-public.allow` (as Basalisk has for its fixtures; the history entries pinned with
-   `PATH@COMMIT`), or a history rewrite (expensive and it changes every commit hash on a public repo). I did neither;
-   no `scan-public.allow` was created. The program-wide decision is with the owner.
+   Rule (owner, every repo): the TREE is clean in the port PR (`scan-public --tree`, which CI and `make scan` now
+   run); HISTORY is not rewritten during the port and gets one planned rewrite pass after the migration, when the
+   `--ref HEAD` gate returns. The table above is kept for that pass. No allow file is needed for Loom.
 9. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
 

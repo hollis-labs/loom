@@ -36,5 +36,6 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
-      - name: hygiene (secrets, hosts, private paths; tree and history)
-        run: python3 scripts/scan-public --ref HEAD
+      - name: hygiene (secrets, hosts, private paths; tree)
+        # Tree only: the history gate returns after the program-wide history pass.
+        run: python3 scripts/scan-public --tree
