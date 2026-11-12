@@ -66,7 +66,7 @@ every `/api/` route needs a scope in `api.Routes()` (a route without a line ther
 is unreachable, not open), `/mcp` needs `loom.mcp`, and `internal/hostguard`
 refuses Host names that are not loopback or in `loom.allowed_hosts`. The
 listener defaults to `127.0.0.1:8080`; a wildcard address is for a deployment
-that has completed first-run setup. New settings go in `internal/settings` (an
+that already has its owner (created offline with `loom identity setup`). New settings go in `internal/settings` (an
 unknown key must stop startup), never in `os.Getenv`; the only environment
 inputs are `SUBSTRATE_CONFIG` and the XDG/HOME variables the path layout reads.
 Pins are edited only in Substrate's `bom/bom.yaml`; `pins check` must pass.

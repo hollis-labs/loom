@@ -98,8 +98,8 @@ make all      # ui-build (vite → internal/webui/dist) then build
 
 The Sysop UI is then served at <http://localhost:8080/>. Loom listens on
 `127.0.0.1:8080` by default (`httphost.addr`). Nothing is served without a
-signed-in owner or an API key: the first visit does first-run setup (see
-[HTTP authentication](#http-authentication)).
+signed-in owner or an API key: create the owner first with `loom identity setup`
+(see [HTTP authentication](#http-authentication)).
 Before the first `make ui-build`, `go-webui` serves a "not built"
 placeholder in place of the app.
 
@@ -214,14 +214,19 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 ### HTTP authentication
 
 Loom is a [Substrate](https://github.com/hollis-labs/substrate) app and its
-auth guard always enforces. First run: `GET /api/setup` reports
-`setup_required`; `POST /api/setup {display_name, username, password}` creates
-the owner and signs in (a browser keeps an HttpOnly session cookie; writes
-need an `X-Requested-With` header). Programs use an API key: the owner creates
-one with `POST /api/identity/keys {name, scopes}` and the client sends
+auth guard always enforces. The owner is created on the host, before the
+service starts: `loom identity setup --username NAME` (password from a prompt or
+the first line of stdin), with the same `--no-project`/`-db` options as the
+service. `GET /api/setup` reports `setup_required`; `POST /api/setup` is always
+refused (`403 setup_offline`): there is no setup window. After sign-in a browser
+keeps an HttpOnly session cookie (writes need an `X-Requested-With` header).
+Programs use an API key: `loom identity key create --name N --scope loom.read
+--scope loom.write --stdout` (or `--out PATH`), or the owner via
+`POST /api/identity/keys {name, scopes}`; the client sends
 `Authorization: Bearer key_...`. Scopes are `loom.read`, `loom.write` and
-`loom.mcp` (`/mcp`, and `loom mcp` over stdio, which reads its key from the file
-named by `mcp.stdio_token_file`). The API serves only loopback `Host` names
+`loom.mcp` (`/mcp`). `loom mcp` over stdio runs under local filesystem trust as
+`local:operator` with those three scopes, so it needs no key; set
+`mcp.stdio_token_file` to make it present a key instead. The API serves only loopback `Host` names
 plus `loom.allowed_hosts`. Local commands (`loom compile`, `pages`, ...) open the
 database file directly and need no sign-in. See `docs/architecture.md` §0 and
 `docs/conversion-notes.md`.
@@ -235,10 +240,12 @@ docker run --rm -p 8080:8080 -v loom-data:/data \
   -v ./loom.local.yaml:/etc/loom.yaml -e SUBSTRATE_CONFIG=/etc/loom.yaml loom
 ```
 
-The first visit to a new instance does the identity first-run step: open the
-UI (or `POST /api/setup`) to create the owner account, then create API keys
-for programs (`POST /api/identity/keys`). Nothing is served before that.
+Create the owner before the container serves, with the same image, mounts and
+config: `docker run --rm -i -v loom-data:/data -v ./loom.local.yaml:/etc/loom.yaml
+-e SUBSTRATE_CONFIG=/etc/loom.yaml loom identity setup --username NAME` (password
+on stdin), then create keys with `loom identity key create`. Nothing is served
+without an owner, and setup over HTTP is refused.
 
-On a host where other agents or users run, do not leave setup over HTTP open: whoever reaches the port first becomes
-the owner, and loopback does not stop another process on the same host. The offline identity bootstrap command (not
-available yet) replaces it: it creates the owner and keys before the service starts.
+Setup over HTTP is off for a reason: on a host where other agents or users run,
+whoever reaches the port first would become the owner, and loopback does not stop
+another process on the same host. Do not set `identity.setup: http`.

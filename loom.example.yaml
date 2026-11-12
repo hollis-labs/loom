@@ -2,7 +2,8 @@
 # Every key is optional. The merge is deep: maps merge, scalars and lists replace, null removes a key.
 httphost:
   addr: "127.0.0.1:8080"
-# Needed only when `loom mcp` (stdio) is used: a file holding an API key with scope loom.mcp.
+# Optional. `loom mcp` (stdio) runs under local filesystem trust and needs no key; set this to a file
+# holding an API key with scope loom.mcp to make it present that key instead (then a wrong key is an error).
 mcp:
   stdio_token_file: ""
 loom:

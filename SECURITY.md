@@ -28,8 +28,8 @@ disclosure; response times are best effort.
 
 `loom serve` hosts the HTTP API, the embedded Sysop UI and a `/mcp` endpoint on
 one listener, behind Substrate's auth guard in `enforce` mode. Every `/api/`
-request and `/mcp` needs a verified credential: a session cookie from first-run
-setup and sign-in, or an API key / minted token, holding the scope the route
+request and `/mcp` needs a verified credential: a session cookie from sign-in
+(the owner is created offline with `loom identity setup`), or an API key / minted token, holding the scope the route
 declares (`loom.read`, `loom.write`, `loom.mcp`). Only `/healthz` and the static
 UI are public. Cookie-authenticated writes need an `X-Requested-With` header and
 a same-origin `Origin`. The API serves only loopback `Host` names plus
@@ -43,7 +43,11 @@ listed host arrives from a loopback peer with exactly one
   reference (`loom.llm_api_key_ref`), never in config, and give keys the scopes
   they need.
 - Loom provides no TLS and no rate limiting.
-- `loom mcp` (stdio) needs a key (`mcp.stdio_token_file`) holding `loom.mcp`.
+- First-run setup over HTTP is refused (`403 setup_offline`); the owner is created on the host with
+  `loom identity setup` before the service starts. Do not set `identity.setup: http`.
+- `loom mcp` (stdio) runs under local filesystem trust: the verified principal `local:operator` with exactly
+  `loom.mcp`, `loom.read` and `loom.write`, for any process run by a user who can open the data file (on a gateway
+  host, any agent the gateway lets reach the child). Set `mcp.stdio_token_file` to require a key instead.
   The local commands (`loom compile`, `pages`, ...) open the database file and
   trust whoever can open it.
 - MCP tools are authorized per tool: read tools need `loom.read`, the rest
