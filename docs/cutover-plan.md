@@ -43,11 +43,14 @@ Not known: who calls `127.0.0.1:8092`. Ask before cutover (step 1.4).
 ## 0. Before the window (anyone, no downtime)
 
 1. Publish the release from `main` (CI is green on the merge): a tarball `loom_<version>_linux_amd64.tar.gz` with
-   `SHA256SUMS` and `deploy.yaml` (PR #16). This needs a build workflow that Loom does not have yet (open items).
-   Record the commit; it is the `--commit` of the deploy.
+   `SHA256SUMS` and `deploy.yaml`, built by `.github/workflows/build.yml` (PR #16: frontend built before the Go build,
+   and a check that the published binary serves the UI). Nothing is tagged or released. Record the commit; it is the
+   `--commit` of the deploy.
 2. Keep the old binary aside, once, on both machines. `be38c7e` has no `deploy.yaml` and no published artifact, so
-   `fleet-install deploy loom --commit be38c7e` cannot bring it back; the first rollback is a file swap (see
-   section 1). From the second deploy on, rollback is `fleet-install deploy loom --commit <previous>`.
+   `fleet-install deploy loom --commit be38c7e` cannot bring it back. On the first deploy the installer keeps a
+   regular file at the target beside the link as `<name>.pre-fleet-install` (as it did for `basalisk` and `mentat` in
+   `~/.local/bin`), so expect `loom.pre-fleet-install`; the driver confirms the name with a `--dry-run` before the real
+   deploy. Keep a copy of your own as well. The first rollback is a file swap (see section 1). From the second deploy on, rollback is `fleet-install deploy loom --commit <previous>`.
 3. Rehearse on a fresh online-backup copy of the live file, in a scratch directory with `HOME` and every XDG variable
    pointed there (the rehearsal procedure and the recorded results are in `docs/conversion-notes.md`). Counts must
    match, `integrity_check` ok, `foreign_key_check` clean, old file checksum unchanged.
@@ -86,18 +89,24 @@ unavailable to agents for longer, from step 2 until the end of section 2 (downti
    process ever starts on an empty file (see section 2, concurrent start).
 5. **PENDING (offline identity bootstrap, precondition):** with the service still stopped, run the bootstrap command
    with the same binary, config file and `HOME`. It creates the owner and the keys: one per caller from step 0.4, and
-   the child's key written to a file readable only by the service's user. Nothing in this plan opens a setup window as
+   the child's key written to a file readable only by the service's user. `~/.config/loom/loom.yaml` is mode 600 and
+   holds references only, never a key; the key file is separate. Nothing in this plan opens a setup window as
    a stand-in; if the bootstrap does not exist yet, the cutover waits.
 6. Deploy: `fleet-install deploy loom --commit <sha>`. Its preflight backs up `loom.db`, it installs the release,
-   flips `~/.local/bin/loom`, writes the drop-in, restarts `loom.service` and checks `/healthz`.
+   flips `~/.local/bin/loom`, writes the drop-in, restarts `loom.service` and checks `/healthz`. The plan does not rely
+   on the installer reloading systemd: before the service is started (use the installer's restart-done flow, or check
+   right after the restart and stop if it differs), compare `systemctl --user cat loom.service` with the drop-in in
+   `deploy.yaml` (the `ExecStart` without `--addr`, `SUBSTRATE_CONFIG`); if it differs, `systemctl --user daemon-reload`
+   and restart.
 7. **First check, before anything else:** `GET /api/setup` answers `{"setup_required":false}`. If it does not, stop
    the service (`systemctl --user stop loom`) and investigate; the bootstrap did not take.
 8. Verify: sign in with the bootstrap's credentials, one write (compile a page), one read, an unknown `Host` refused
    (403), `/mcp` with a key listing the 30 tools.
 
 **Rollback.** First cutover (the previous version has no descriptor): stop the service, remove the drop-in the
-installer wrote (`loom.service.d/20-fleet-exec.conf`) and `systemctl --user daemon-reload`, replace the symlink
-`~/.local/bin/loom` with the preserved old binary (step 0.2), start. The old `main.db` was never written; `loom.db`
+installer wrote (`loom.service.d/20-fleet-exec.conf`) and `systemctl --user daemon-reload`, restore
+`~/.local/bin/loom.pre-fleet-install` over the symlink `~/.local/bin/loom` (the name is verified by the `--dry-run`
+beforehand; the copy from step 0.2 is the fallback), start. The old `main.db` was never written; `loom.db`
 can stay or go. Every later deploy: `fleet-install deploy loom --commit <previous>` (or `fleet-install rollback
 loom`); a migration that already ran is not reversed by either, the backup from the preflight is the restore.
 
@@ -181,9 +190,11 @@ choice. An unmigrated checkout is not harmed by the new binary: `loom mcp` stops
 - Who calls the service on the loopback port (step 0.4).
 - The offline identity bootstrap, a precondition (framework, pending): steps 1.5, 3.3. Local stdio trust: step 2.1.
 - Whether a gateway-launched child counts as local (decision with the Framework Agent).
-- A build workflow that publishes the tarball with `deploy.yaml` (Basalisk's `build.yml` calls the shared
-  `go-app-build.yml`); Loom's CI is `ci.yml` only. Without it `deploy.yaml` (PR #16) cannot be used. Not written yet.
-- Installer behaviour I could not check without running it (instructed not to): whether it reloads systemd after
-  writing the drop-in, and what it records as "previous" when `~/.local/bin/loom` is a regular file.
-- A concurrent first start on an empty file can lose a race in one process (library behaviour); worked around by
-  order, not fixed.
+- The build workflow (PR #16) runs on the org build runner and has not run on a merged commit yet; its first run is
+  the proof that the tarball and the UI check work there.
+- Installer behaviour the driver verifies with a `--dry-run` at cutover (the plan does not run it): the
+  `loom.pre-fleet-install` name, and whether it reloads systemd (the plan checks it either way).
+- The signing-key check for a wrongly launched child is a framework Gap (`docs/conversion-notes.md`, gap 9); until
+  then the child's launch (same `SUBSTRATE_CONFIG`, no `-db`) is the control.
+- A concurrent first start on an empty file can lose a race in one process: a framework limit
+  (`docs/conversion-notes.md`, gap 9), worked around by the order, not fixed.

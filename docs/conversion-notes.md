@@ -63,6 +63,21 @@ Things Substrate did not provide, or choices that need the owner. Each says what
    runtime, as the pre-port `main.go` did (twice). Carried over unchanged; not a setting yet.
 8. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
    and MCP only); it still does not. `wiki_links.relation` is still always `references`.
+9. **Framework limits found by running two processes on one database (PR #15).** Both are Substrate's, not Loom's
+   (the only Loom-side cause, a start-up guard without a busy timeout, is fixed).
+   - **Two processes that start at the same moment on a new file can lose at open or at the migration.** With the real
+     binary, `loom serve` and `loom mcp -db <same new file>` started together: 3 of 5 rounds one of them failed
+     (`database is locked` at open, or `table wiki_bundles already exists` from the migration). The file was never
+     damaged and a lone start afterwards worked. On an already migrated file concurrent starts are clean. **The rule:**
+     the schema is created first (`loom migrate-data`, or one earlier start), the service starts first and the child
+     second. Passed to the Framework Agent.
+   - **A second process can quietly become a second issuer.** Identity creates its signing key wherever the config
+     points if none exists there. A child launched with `-db` points beside the database, not at the service's data
+     directory, so it writes its own key next to a database that already holds users. Wanted: refuse to create a
+     signing key while the database already holds identity rows (a start-time check in the identity module). It
+     needs the identity module's table and key-file knowledge, so it is **not built in Loom** (no identity logic here);
+     until it exists the child is launched with the service's `SUBSTRATE_CONFIG` and no `-db`
+     (`docs/cutover-plan.md`, section 2), which PR #15 tests.
 
 ## Decisions made in the port
 
