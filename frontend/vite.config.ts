@@ -1,21 +1,27 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import { writeFileSync } from "node:fs"
+import { resolve } from "node:path"
+import tailwindcss from "@tailwindcss/vite"
+import { defineConfig } from "vite"
 
-// The Go binary serves this SPA under base_path (see internal/webui).
-// `build.outDir` points at the Go embed directory so `npm run build`
-// drops the bundle exactly where `//go:embed all:dist` expects it.
+const outDir = resolve(import.meta.dirname, "../internal/webui/dist")
+// The dev proxy target: the backend started for development (see docs/conversion-notes.md).
+const backend = process.env.LOOM_DEV_BACKEND ?? "http://127.0.0.1:8080"
+
 export default defineConfig({
-  base: '/',
-  plugins: [react(), tailwindcss()],
-  build: {
-    outDir: '../internal/webui/dist',
-    emptyOutDir: true,
-  },
-  server: {
-    // `make ui-dev` proxies same-origin /api calls to `make run` on :8080.
-    proxy: {
-      '/api': 'http://localhost:8080',
+  base: "/",
+  plugins: [
+    tailwindcss(),
+    {
+      // emptyOutDir removes dist/.gitkeep, which the Go embed needs to compile when unbuilt.
+      name: "keep-gitkeep",
+      closeBundle() {
+        writeFileSync(resolve(outDir, ".gitkeep"), "")
+      },
     },
-  },
+  ],
+  esbuild: { jsx: "automatic" },
+  // app-shell ships TypeScript source; the dependency optimizer needs the same JSX runtime.
+  optimizeDeps: { esbuildOptions: { jsx: "automatic" } },
+  build: { outDir, emptyOutDir: true },
+  server: { proxy: { "/api": backend } },
 })

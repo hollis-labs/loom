@@ -1,0 +1,118 @@
+import { ManifestShell, type PageComponent } from "@hollis-labs/app-shell"
+import { Button } from "@hollis-labs/design-components"
+import { Braces, Briefcase, FileDown, Files, LogOut, ScrollText } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { ApiError, request, UNAUTHORIZED_EVENT } from "./api/request"
+import { Entry } from "./identity/entry"
+import { Notice } from "./identity/forms"
+import { type Session, SessionContext } from "./identity/session"
+import { SignOutPage } from "./identity/signout"
+import { manifest } from "./manifest"
+import { BundlesPage } from "./pages/bundles"
+import { DirectivesPage } from "./pages/directives"
+import { ExportsPage } from "./pages/exports"
+import { JobsPage } from "./pages/jobs"
+import { PagesPage } from "./pages/pages"
+
+// Kit icon names used by the contributions, resolved by the shell.
+const icons = {
+  briefcase: Briefcase,
+  files: Files,
+  "scroll-text": ScrollText,
+  "file-down": FileDown,
+  braces: Braces,
+  "log-out": LogOut,
+}
+
+const pages: Record<string, PageComponent> = {
+  bundles: () => <BundlesPage />,
+  pages: () => <PagesPage />,
+  jobs: () => <JobsPage />,
+  exports: () => <ExportsPage />,
+  directives: () => <DirectivesPage />,
+  "sign-out": () => <SignOutPage />,
+}
+
+function usePath() {
+  const [path, setPath] = useState(window.location.pathname)
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname)
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
+  }, [])
+  const navigate = useCallback((to: string) => {
+    if (to !== window.location.pathname) window.history.pushState(null, "", to)
+    setPath(to)
+  }, [])
+  return [path, navigate] as const
+}
+
+export function App() {
+  // null: not signed in. There is no profile read route, so after a reload the name is unknown.
+  const [name, setName] = useState<string | null>(null)
+  const [setup, setSetup] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [path, navigate] = usePath()
+  const signedOut = useCallback(() => {
+    setName(null)
+    setSetup(false)
+    navigate("/")
+  }, [navigate])
+  useEffect(() => {
+    async function load() {
+      try {
+        const state = await request<{ setup_required: boolean }>("setup")
+        setSetup(state.setup_required)
+        if (!state.setup_required) {
+          try {
+            await request("status") // any 401 here means there is no session
+            setName("")
+          } catch (e) {
+            if (!(e instanceof ApiError && e.status === 401)) throw e
+          }
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not reach Loom.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    void load()
+  }, [])
+  useEffect(() => {
+    window.addEventListener(UNAUTHORIZED_EVENT, signedOut)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, signedOut)
+  }, [signedOut])
+  const session = useMemo<Session | null>(
+    () => (name === null ? null : { name, signedOut }),
+    [name, signedOut],
+  )
+
+  if (loading)
+    return (
+      <main className="entry-loading" role="status">
+        Opening Loom…
+      </main>
+    )
+  if (error && !session)
+    return (
+      <main className="entry-loading">
+        <Notice error={error} />
+        <Button onClick={() => window.location.reload()}>Try again</Button>
+      </main>
+    )
+  if (!session) return <Entry setup={setup} onReady={setName} />
+  return (
+    <SessionContext.Provider value={session}>
+      <ManifestShell
+        manifest={manifest}
+        apiBase="/api"
+        path={path}
+        onNavigate={navigate}
+        pages={pages}
+        icons={icons}
+      />
+    </SessionContext.Provider>
+  )
+}

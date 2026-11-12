@@ -1,28 +1,75 @@
 # Frontend conversion notes: Loom onto Substrate
 
-The backend moved onto Substrate (see `../docs/conversion-notes.md`). The frontend is the GUI track's
-(`gui-loom`); this file records what the backend change means for it and the framework gaps found so far. Nothing
-under `frontend/src` was changed by the backend port.
+The backend moved onto Substrate (see `../docs/conversion-notes.md`). The frontend is moved onto app-shell and the
+BOM-pinned kits. This file records what changed, what the framework did not cover, and what was verified.
 
-## Contract the backend now has
+## What each old view did (from `loom-previous/frontend/src`, the reference: the old app cannot be installed)
 
-- **Errors** are `{code, message, details?}`; read `message`. Plain-text error bodies are gone.
-- **401 means sign in.** The shared bearer token and its prompt (`src/api/auth*`, tab-scoped sessionStorage) no
-  longer match anything: sign-in is a cookie session. First run: `GET /api/setup` (`setup_required`), `POST /api/setup
-  {display_name, username, password}`; then `POST /api/login {username, password}`, `POST /api/logout`.
-- **Writes** (every `POST` and `PUT`) send `X-Requested-With` (any non-empty value); the page's own `Origin` is
-  required, and browsers add it.
-- **Scopes:** no `loom.read` is 403 everywhere, no `loom.write` is 403 on changes.
-- **Health** is `GET /healthz`; `GET /api/health` is gone.
-- The paths and bodies of the other `/api/` routes are unchanged.
+All five were one `DashboardPage` switched by in-memory state (no router); every call went through the sysop-ui
+client with a tab-scoped bearer token. Every view fetched on mount and showed an `EmptyState` "Request failed" on any error.
+
+| View | Reads | Writes | Notes |
+|---|---|---|---|
+| Bundles | `GET /api/bundles` | none | summary cards (count, "Canonical Store: SQLite") and one card per bundle (title, slug, description) |
+| Pages | `GET /api/pages?bundle=nanite&q=` on mount and on each keystroke | none | search box, list of pages (title, summary or slug), selected page body in a `pre`; first page auto-selected; empty state "No pages yet" |
+| Compile Jobs | `GET /api/compile-jobs` | `POST /api/compile-jobs {bundle: nanite, generator: wiki_page, input}` | textarea pre-filled with a stub page, Compile button, then reload of the table (ID, generator, status) |
+| Exports | none | `POST /api/bundles/nanite/export {}` | "Export Nanite" button; shows the export dir and file names |
+| Directives | none | `POST /api/directives/parse {text, source: ui, save: true}` | textarea pre-filled with sample directives, Parse button, raw JSON result or error. Note `save: true`: it records to the directive ledger |
+
+The ported API serves all five (every route above is in the backend's table): no view is dropped and no Gap arises.
+
+## What the frontend is now
+
+- React 19, Vite 7, Tailwind 4, TypeScript 5.9: the same toolchain as Basalisk. Every `@hollis-labs/*` dependency is
+  at the exact version in Substrate's `bom/bom.yaml` `kits:` and installs from the public npm registry.
+  `@hollis-labs/sysop-ui` (a git dependency on a repository that does not exist) is gone.
+- `ManifestShell` (app-shell) draws the navigation from `src/generated/frontend.manifest.json`, produced by
+  `npm run manifest` (`substrate frontend`). The app's own nav items and surfaces are in `cmd/loom/ui/app.json`, named
+  by `frontend.contributions` in the manifest; there is no client-side merge.
+- Pages (`src/pages/`): Bundles, Pages, Compile jobs, Exports, Directives. Same five views as before, built from
+  design-components (`Card`, `Metric`, `Table`, `Textarea`, `SearchInput`, `Pill`, `EmptyState`).
+- Identity screens live in one directory, `src/identity/` (setup, sign-in, sign-out, session context), so the shared
+  identity kit and the shell's user menu can replace them whole when they ship.
+- `src/api/request.ts` is a small `fetch` wrapper: cookie session, `X-Requested-With` on every call, the flat
+  `{code, message, details?}` error parsed into `ApiError`; a 401 that is not `invalid_login` returns to sign-in.
+- Removed: `src/api/auth*` (the shared bearer token and its prompt), the sysop-ui API client, `auth.test.mjs`,
+  `GET /api/health`.
+
+## Behaviour differences
+
+- The old UI hard-coded the `nanite` bundle for pages, compile and export. The three views now have a bundle picker
+  over `GET /api/bundles`; the bundle named `nanite` is selected on first load when it exists (the old behaviour),
+  otherwise the first. The Exports button reads "Export bundle" instead of "Export Nanite".
+- Sign-in is the identity module's cookie session. After a reload the UI probes `GET /api/status` to learn whether a
+  session exists; the display name is only known for a sign-in in the same page life (no profile read route).
+- Client URLs are real paths (`/pages`, `/jobs`, ...); the Go host's SPA fallback serves them.
 
 ## Gaps
 
-1. **`@hollis-labs/sysop-ui` is a git dependency** (`github:hollis-labs/sysop-ui#v0.9.0`, fetched over SSH).
-   `npm ci` fails on the migration host ("Could not read from remote repository"), so typecheck and build could not
-   be run here. The Substrate shape is `app-shell` and the exact-pinned kits in Substrate's `bom/bom.yaml` `kits:`,
-   from the npm registry.
-2. **No `lint` script** in `package.json`; CI runs typecheck and build only until one exists.
-3. **The identity module has no UI** (Substrate guide section 8): setup, sign-in and password screens are the
-   app's, and app-shell has no user-menu region, so sign-out is a page.
-4. **`src/api/auth.test.mjs`** tests the removed bearer-token flow and goes with it.
+1. **Dev proxy needs `identity.allowed_origins`.** Writes through the Vite dev server (`make ui-dev`) answer
+   `403 bad_origin` ("the request did not come from this app"): the browser's `Origin` is the Vite origin, and the
+   backend accepts only its own listener's origin. Verified in a real browser and with `curl`. Working setup (a
+   backend setting, in the `SUBSTRATE_CONFIG` file used for development):
+   `identity: { allowed_origins: ["http://127.0.0.1:<vite port>"] }`. The built, embedded UI is same-origin and needs
+   nothing. Decision for the driver: document this in `docs/conversion-notes.md`, or ship a dev override.
+2. **`GET /api/identity/profile` does not exist on this branch.** Both the owner and a non-admin answer
+   `403 route_not_mapped` ("verified caller identity required"). The UI therefore cannot show who is signed in after a
+   reload. Framework addition planned (CW-20261112-0080).
+3. **No sign-out / user-menu region in app-shell**, so sign-out is a `nav.footer` page with one button (interim,
+   Basalisk's pattern; CW-20261112-0107).
+4. **Identity ships no UI** (setup, sign-in, password screens are app-owned until `@hollis-labs/kit-identity`).
+   Loom has no change-password, key or session screens: the old app had none and none was added.
+5. **app-shell and design-bindings publish TypeScript source.** `tsconfig.json` needs `allowImportingTsExtensions`,
+   Tailwind needs `@source "../node_modules/@hollis-labs/app-shell/src"` (app-shell has no `source.css`), and the dev
+   server needs `optimizeDeps.esbuildOptions.jsx = "automatic"` or `ManifestShell` fails in dev with
+   `React is not defined` (the production build is fine). All three are in this tree.
+6. **`npm audit`** reports 8 findings (7 moderate, 1 high) in dev tooling (vite 7.3.6 dev server and transitive
+   dev dependencies); the versions are the Basalisk pins and were not changed.
+7. The Vite build prints "use client" warnings from `@base-ui/react`; harmless.
+8. Biome 2.5.14 prints an info that `biome.json` is deprecated-shaped ("migrate"); same file as Basalisk.
+9. **app-shell has no narrow-viewport layout.** At 390 px wide the left nav stays 240 px and leaves about 150 px for the
+   page; nothing overflows horizontally (document width stays 390) but content is cramped. Checked on all five pages
+   and sign-out in Chrome. The pages stack their own two-column layouts below 64rem; the shell is not worked around.
+10. **`frontend.contributions` is in `cmd/loom/substrate.yaml`** (`ui/app.json`, relative to the manifest); the
+    generated manifest comes from the real manifest (`npm run manifest`) and `substrate generate` leaves
+    `substrate_wiring.go` unchanged.
