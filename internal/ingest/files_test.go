@@ -13,16 +13,16 @@ import (
 
 func TestFileSourceReadsTextFilesWithExcludesAndRedaction(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("# Alpha\n\nsecret=abc123\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("# Alpha\n\nsecret=abc123\n"), 0o600); err != nil {
 		t.Fatalf("write alpha: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "skip"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "skip"), 0o750); err != nil {
 		t.Fatalf("mkdir skip: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "skip", "beta.md"), []byte("# Beta\n\nignore"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "skip", "beta.md"), []byte("# Beta\n\nignore"), 0o600); err != nil {
 		t.Fatalf("write beta: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.bin"), []byte("ignore"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "notes.bin"), []byte("ignore"), 0o600); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
 

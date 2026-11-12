@@ -194,7 +194,7 @@ func directiveTitle(d directivex.ParsedDirective) string {
 
 func classifyIngestError(err error) error {
 	if errors.Is(err, ingest.ErrInvalid) {
-		return fmt.Errorf("%w: %v", storage.ErrInvalid, err)
+		return fmt.Errorf("%w: %w", storage.ErrInvalid, err)
 	}
 	return err
 }

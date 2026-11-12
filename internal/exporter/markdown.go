@@ -36,7 +36,7 @@ func ExportBundle(ctx context.Context, repo *storage.Repository, bundleSlug, dir
 	if err != nil {
 		return BundleExport{}, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	artifacts := make([]pageArtifact, 0, len(pages))
 	for _, p := range pages {
 		links, err := repo.ListPageLinks(ctx, p.ID)
