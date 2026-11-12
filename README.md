@@ -86,7 +86,7 @@ MIT — see [LICENSE](LICENSE).
 ## Prerequisites
 
 - Go 1.26.6+
-- Node.js 20+ / npm
+- Node.js 22+ / npm
 
 ## Build
 
@@ -96,9 +96,9 @@ make all      # ui-build (vite → internal/webui/dist) then build
 ```
 
 The Sysop UI is then served at <http://localhost:8080/>. Loom listens on
-`127.0.0.1:8080` by default. The HTTP API has no authentication and can
-trigger paid LLM calls, so only widen it (`-addr :8080`) on a trusted network
-or behind an authenticating proxy.
+`127.0.0.1:8080` by default (`httphost.addr`). Nothing is served without a
+signed-in owner or an API key: the first visit does first-run setup (see
+[HTTP authentication](#http-authentication)).
 Before the first `make ui-build`, `go-webui` serves a "not built"
 placeholder in place of the app.
 
@@ -111,7 +111,8 @@ placeholder in place of the app.
 | `make run` | Build and run the server |
 | `make install` | Build the embedded UI + install `loom` to `$GOBIN` |
 | `make test` / `make vet` | Go test / vet |
-| `make lint` | `vet` plus golangci-lint/staticcheck/errcheck/govulncheck, each skipped if not installed |
+| `make lint` | `vet` plus golangci-lint |
+| `make pins` / `make scan` / `make generate` | Substrate pins check / hygiene scan / regenerate `substrate_wiring.go` |
 | `make clean` | Remove the built binary and `frontend/node_modules` |
 
 ## Quick start
@@ -121,7 +122,6 @@ The same SQLite-backed Loom services are exposed through HTTP, CLI, and MCP:
 ```sh
 loom serve                         # HTTP API, embedded UI, hosted /mcp
 loom mcp                           # stdio MCP server
-loom migrate                       # apply SQLite migrations
 loom compile < page.md             # compile and store a wiki page (stdin, or -input "text/JSON")
 loom pages conformance my-page     # check one page's OKF §11 conformance (-bundle nanite by default)
 loom bundles conformance nanite    # check every page in a bundle's OKF §11 conformance
@@ -130,15 +130,13 @@ loom directives parse < notes.md   # preview directives from text
 ```
 
 Exports on the CLI, MCP (`loom_export_bundle`), and HTTP share the operator's
-`paths.export_dir` from `config.yaml` (by default the app data directory's
-`exports` directory). An omitted `dir` writes to `<export_dir>/<bundle>`;
+`loom.export_dir` (by default the data directory's `exports` directory). An omitted `dir` writes to `<export_dir>/<bundle>`;
 relative directories resolve under that root, and absolute directories must
 stay inside it. Traversal and symlink escapes are refused. Existing output
 symlinks are refused, and files are replaced atomically to avoid modifying
 external hardlink targets. A missing export root disables export rather than
 falling back to the process working directory. Configure a dedicated export
-root: caller identity and per-caller authorization remain separate work
-(CW-20260930-0253).
+root.
 
 `loom compile`'s input (stdin or `-input`) may be plain text, which becomes
 the page body verbatim, or a JSON `compiler.Request` object
@@ -148,17 +146,20 @@ the `loom_compile_request` MCP tool, and directive-driven compiles.
 
 Compile jobs default to Loom's deterministic, offline template compiler. Set
 `"generation_mode": "llm"` in the request to instead author the page body
-with an LLM: export `ANTHROPIC_API_KEY` and, optionally, set `llm.model` in
-`config.yaml` (see `config.example.yaml`; defaults to `claude-sonnet-4-6`
-when left blank). Without an API key set, `generation_mode=llm` jobs fail
+with an LLM: set `loom.llm_api_key_ref` to a secret reference for the
+Anthropic key (`keychain://...`, `file://...`, `op://...`, or
+`env://ANTHROPIC_API_KEY`, which Loom allows by default) and, optionally,
+`loom.llm_model` (defaults to `claude-sonnet-4-6`) in the file named by
+`SUBSTRATE_CONFIG` (see `loom.example.yaml`). Without a reference,
+`generation_mode=llm` jobs fail
 with a clear error — the deterministic path never needs one. Compile-job
 responses also include a `confidence`/`confidence_tier` and, when
 overwriting an existing page, a `diff` summary, so a caller can tell a safe
 write from one that needs review.
 
-Set `LOOM_OTEL_ENABLED=1` to enable OpenTelemetry traces and
-`LOOM_OTEL_METRICS_ENABLED=1` to enable traces plus Loom HTTP/MCP metrics.
-The equivalent CLI flags are `-otel`, `-otel-metrics`, and `-otel-endpoint`.
+Set `loom.otel_enabled: true` to enable OpenTelemetry traces and
+`loom.otel_metrics: true` to enable traces plus Loom HTTP/MCP metrics;
+`loom.otel_endpoint` names the OTLP HTTP collector.
 
 ## Develop
 
@@ -211,28 +212,24 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 
 ### HTTP authentication
 
-`loom serve` defaults to tokenless loopback (`127.0.0.1:8080`). A non-loopback
-bind requires `LOOM_API_TOKEN` or `-token`. With a token, `/api/*` and `/mcp`
-require `Authorization: Bearer <token>`, including loopback requests. Exact
-GET/HEAD `/api/health` stays available for probes. CLI and stdio `loom mcp`
-keep their existing behavior. Behind a reverse proxy, set a token: without one,
-a request carrying `Forwarded`, `X-Forwarded-*` or `X-Real-IP` is refused (see
-`SECURITY.md`).
+Loom is a [Substrate](https://github.com/hollis-labs/substrate) app and its
+auth guard always enforces. First run: `GET /api/setup` reports
+`setup_required`; `POST /api/setup {display_name, username, password}` creates
+the owner and signs in (a browser keeps an HttpOnly session cookie; writes
+need an `X-Requested-With` header). Programs use an API key: the owner creates
+one with `POST /api/identity/keys {name, scopes}` and the client sends
+`Authorization: Bearer key_...`. Scopes are `loom.read`, `loom.write` and
+`loom.mcp` (`/mcp`, and `loom mcp` over stdio, which reads its key from the file
+named by `mcp.stdio_token_file`). The API serves only loopback `Host` names
+plus `loom.allowed_hosts`. Local commands (`loom compile`, `pages`, ...) open the
+database file directly and need no sign-in. See `docs/architecture.md` §0 and
+`docs/conversion-notes.md`.
 
-Tokenless loopback is a development default only; release deployments require LOOM_API_TOKEN or -token even on loopback.
-
-For Docker, supply a runtime secret; the image intentionally has no baked-in token:
+For Docker, mount a `SUBSTRATE_CONFIG` file that sets
+`httphost.addr: "0.0.0.0:8080"` (the default is loopback), and keep `/data`
+on a volume:
 
 ```sh
-docker run --rm -p 8080:8080 -e LOOM_API_TOKEN="$LOOM_API_TOKEN" loom
+docker run --rm -p 8080:8080 -v loom-data:/data \
+  -v ./loom.local.yaml:/etc/loom.yaml -e SUBSTRATE_CONFIG=/etc/loom.yaml loom
 ```
-
-Without the environment token, Docker's `-addr=:8080` command fails before
-opening the database. The UI prompts on a 401 and stores the token only in the
-current tab's sessionStorage. A later 401 clears it and prompts again; canceling
-or a rejected retry reports the request error. Tokens never appear in URLs.
-Browser origins must be loopback or listed in `LOOM_CORS_ORIGINS` / `-cors-origin`
-(comma-separated exact origins). There is no wildcard CORS allowance.
-
-Browser bearer regressions run with Node 24:
-`node --test frontend/src/api/auth.test.mjs`.

@@ -1,143 +1,51 @@
+// Package storage owns Loom's durable schema and the repository over it. The schema is one
+// embedded goose migration applied by Substrate's database module. Loom is SQLite only.
 package storage
 
 import (
-	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
-	"io/fs"
-	"path/filepath"
-	"sort"
-	"strings"
+	"os"
 
-	"github.com/hollis-labs/libs/core/util/sqlite/sqlitekit"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" driver the legacy guard uses
 )
 
-//go:embed migrations/*.sql
-var migrationFS embed.FS
+//go:embed migrations
+var migrations embed.FS
 
-func Open(ctx context.Context, path string) (*sql.DB, error) {
-	db, err := sqlitekit.OpenSingle(ctx, path, sqlitekit.OpenOptions{CreateParentDir: true})
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	return db, nil
-}
+// Migrations is the embedded migration tree: root "migrations" holds one directory per
+// dialect (here only sqlite).
+func Migrations() (fsys embed.FS, root string) { return migrations, "migrations" }
 
-func Migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (
-		version TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-	)`); err != nil {
-		return fmt.Errorf("ensure schema_version: %w", err)
+// ErrLegacyLayout means the database file holds the layout used before Loom moved onto
+// Substrate. `loom migrate-data` copies it into the new schema (see legacy.go).
+var ErrLegacyLayout = errors.New("the database uses the pre-Substrate Loom layout")
+
+// RefuseLegacy returns ErrLegacyLayout (wrapped with what to do) when the SQLite file at
+// path already exists with the old layout: a schema_version table, which the old
+// hand-rolled migrator kept and the goose one never creates. Opening such a file would add the
+// new tables beside the old ones, so it is refused. A missing or empty file is fine. Run it before the database module opens the file, because opening migrates.
+func RefuseLegacy(path string) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
 	}
-	migrations, err := loadMigrations()
+	// Only reads: the guard never changes the file it is judging.
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return err
 	}
-	for _, migration := range migrations {
-		applied, err := migrationApplied(ctx, db, migration.Version)
-		if err != nil {
-			return err
-		}
-		if applied {
-			continue
-		}
-		if err := applyMigration(ctx, db, migration); err != nil {
-			return err
-		}
+	defer func() { _ = db.Close() }()
+	var legacy int
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_version'").Scan(&legacy); err != nil {
+		return fmt.Errorf("inspect %s: %w", path, err)
 	}
-	return seed(ctx, db)
-}
-
-type Migration struct {
-	Version string
-	Name    string
-	SQL     string
-}
-
-func AppliedMigrations(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_version ORDER BY version`)
-	if err != nil {
-		return nil, fmt.Errorf("list applied migrations: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return nil, err
-		}
-		out = append(out, version)
-	}
-	return out, rows.Err()
-}
-
-func loadMigrations() ([]Migration, error) {
-	entries, err := fs.ReadDir(migrationFS, "migrations")
-	if err != nil {
-		return nil, fmt.Errorf("read migrations: %w", err)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	out := make([]Migration, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		data, err := migrationFS.ReadFile(filepath.Join("migrations", entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("read migration %s: %w", entry.Name(), err)
-		}
-		version := strings.TrimSuffix(entry.Name(), ".sql")
-		out = append(out, Migration{Version: version, Name: entry.Name(), SQL: string(data)})
-	}
-	return out, nil
-}
-
-func migrationApplied(ctx context.Context, db *sql.DB, version string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_version WHERE version = ?`, version).Scan(&n)
-	if err != nil {
-		return false, fmt.Errorf("check migration %s: %w", version, err)
-	}
-	return n > 0, nil
-}
-
-func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin migration %s: %w", migration.Version, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
-		return fmt.Errorf("apply migration %s: %w", migration.Name, err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version (version) VALUES (?)`, migration.Version); err != nil {
-		return fmt.Errorf("record migration %s: %w", migration.Version, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migration %s: %w", migration.Version, err)
-	}
-	return nil
-}
-
-func seed(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `
-INSERT INTO wiki_bundles (slug, title, description)
-VALUES ('nanite', 'Nanite', 'Seed bundle for Nanite wiki output')
-ON CONFLICT(slug) DO NOTHING`)
-	if err != nil {
-		return fmt.Errorf("seed nanite bundle: %w", err)
-	}
-	_, err = db.ExecContext(ctx, `
-INSERT INTO templates (name, generator, body)
-VALUES ('wiki_page.default', 'wiki_page', '# {{title}}
-
-{{body}}')
-ON CONFLICT(name) DO NOTHING`)
-	if err != nil {
-		return fmt.Errorf("seed wiki template: %w", err)
+	if legacy > 0 {
+		return fmt.Errorf("%w (%s): run `loom migrate-data --from <old> --to <new>` and open the new file. See docs/conversion-notes.md",
+			ErrLegacyLayout, path)
 	}
 	return nil
 }

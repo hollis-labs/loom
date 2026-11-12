@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/loom/internal/llm"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 // fakeProvider is a minimal in-memory llm.Provider, kept local to this test
@@ -28,14 +29,11 @@ func (f *fakeProvider) Generate(ctx context.Context, prompt llm.Prompt) (string,
 
 func TestCompileJobUsesLLMProviderWhenGenerationModeIsLLM(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 	comp.SetLLMProvider(&fakeProvider{text: "# Scheduler\n\nLLM-authored body."}, nil)
@@ -83,14 +81,11 @@ func TestCompileJobUsesLLMProviderWhenGenerationModeIsLLM(t *testing.T) {
 // llm's baseline defaultRedactors.
 func TestCompileJobLLMModeRedactsConfiguredPatterns(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 	provider := &fakeProvider{text: "# Scheduler\n\nLLM-authored body."}
@@ -124,14 +119,11 @@ func TestCompileJobLLMModeRedactsConfiguredPatterns(t *testing.T) {
 
 func TestCompileJobLLMModeWithoutProviderFails(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 
@@ -153,14 +145,11 @@ func TestCompileJobLLMModeWithoutProviderFails(t *testing.T) {
 
 func TestCompileJobDefaultGenerationModeStillDeterministic(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 	// No LLM provider configured; a job with no generation_mode (or

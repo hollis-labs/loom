@@ -15,21 +15,18 @@ import (
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 func TestHTTPCompileAndListPages(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"# API Page\n\nBody"}`))
 	rec := httptest.NewRecorder()
@@ -97,17 +94,13 @@ func TestHTTPCompileAndListPages(t *testing.T) {
 
 func TestHTTPCompileFailureJobAndEvents(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Missing Template\",\"body\":\"Body\",\"template\":\"wiki_page.missing\"}"}`))
 	rec := httptest.NewRecorder()
@@ -165,17 +158,13 @@ func TestHTTPCompileFailureJobAndEvents(t *testing.T) {
 
 func TestHTTPBundleCreateUpdateAndGet(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/bundles", strings.NewReader(`{"slug":"team wiki","title":"Team Wiki","description":"first"}`))
 	rec := httptest.NewRecorder()
@@ -218,17 +207,13 @@ func TestHTTPBundleCreateUpdateAndGet(t *testing.T) {
 
 func TestHTTPStatusIncludesStats(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"# Status Page\n\nBody"}`))
 	rec := httptest.NewRecorder()
@@ -261,17 +246,13 @@ func TestHTTPStatusIncludesStats(t *testing.T) {
 
 func TestHTTPPageAndBundleLinks(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Link Page\",\"body\":\"See [Runtime](runtime) and [[Compile Jobs]].\"}"}`))
 	rec := httptest.NewRecorder()
@@ -313,17 +294,13 @@ func TestHTTPPageAndBundleLinks(t *testing.T) {
 
 func TestHTTPPageAndBundleVerifications(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Verify Page\",\"summary\":\"summary\",\"body\":\"Body\",\"source\":\"test\"}"}`))
 	rec := httptest.NewRecorder()
@@ -365,17 +342,13 @@ func TestHTTPPageAndBundleVerifications(t *testing.T) {
 
 func TestHTTPPageAndBundleConformance(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Conformance Page\",\"summary\":\"summary\",\"body\":\"Body\",\"source\":\"test\"}"}`))
 	rec := httptest.NewRecorder()
@@ -457,17 +430,13 @@ func TestHTTPPageAndBundleConformance(t *testing.T) {
 
 func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	body := `{"bundle":"nanite","source":"http-test","text":"::config generator=wiki_page, slug=http-directive\n::note HTTP Directive"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/directives/compile", strings.NewReader(body))
@@ -481,8 +450,8 @@ func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 			ID int64 `json:"id"`
 		} `json:"jobs"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err2 := json.Unmarshal(rec.Body.Bytes(), &result); err2 != nil {
+		t.Fatalf("unmarshal: %v", err2)
 	}
 	if len(result.Jobs) != 1 {
 		t.Fatalf("result = %+v", result)
@@ -497,8 +466,8 @@ func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 	var events []struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
-		t.Fatalf("events json: %v", err)
+	if err2 := json.Unmarshal(rec.Body.Bytes(), &events); err2 != nil {
+		t.Fatalf("events json: %v", err2)
 	}
 	if len(events) != 3 || events[0].Status != "queued" || events[2].Status != "completed" {
 		t.Fatalf("events = %+v", events)
@@ -521,8 +490,8 @@ func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 		Hash    string `json:"hash"`
 		Command string `json:"command"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
-		t.Fatalf("directives list json: %v", err)
+	if err2 := json.Unmarshal(rec.Body.Bytes(), &entries); err2 != nil {
+		t.Fatalf("directives list json: %v", err2)
 	}
 	if len(entries) != 1 || entries[0].Hash == "" || entries[0].Command != "note" {
 		t.Fatalf("entries = %+v", entries)
@@ -537,8 +506,8 @@ func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 	var entry struct {
 		Hash string `json:"hash"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &entry); err != nil {
-		t.Fatalf("directive get json: %v", err)
+	if err2 := json.Unmarshal(rec.Body.Bytes(), &entry); err2 != nil {
+		t.Fatalf("directive get json: %v", err2)
 	}
 	if entry.Hash != entries[0].Hash {
 		t.Fatalf("entry = %+v, want hash %s", entry, entries[0].Hash)
@@ -562,20 +531,16 @@ func TestHTTPDirectiveCompileAndJobEvents(t *testing.T) {
 
 func TestHTTPCompileJobFilters(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	if _, err := repo.UpsertBundle(ctx, domain.Bundle{Slug: "team", Title: "Team"}); err != nil {
 		t.Fatalf("UpsertBundle: %v", err)
 	}
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"# Nanite Job"}`))
 	rec := httptest.NewRecorder()
@@ -623,17 +588,13 @@ func TestHTTPCompileJobFilters(t *testing.T) {
 
 func TestHTTPTemplates(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/templates", strings.NewReader(`{"name":"wiki_page.full","generator":"wiki_page","body":"# {{title}}"}`))
 	rec := httptest.NewRecorder()
@@ -687,22 +648,18 @@ func TestHTTPTemplates(t *testing.T) {
 
 func TestHTTPIngest(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api-ingest.md")
-	if err := os.WriteFile(path, []byte("# API Ingest\n\nBody"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# API Ingest\n\nBody"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	body := `{"bundle":"nanite","source":"http","paths":["` + path + `"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))
@@ -768,17 +725,13 @@ func TestHTTPIngest(t *testing.T) {
 
 func TestHTTPIngestText(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).Mux()
 
 	body := `{"bundle":"nanite","source":"chatgpt","source_key":"thread-1","title":"Thread Notes","body":"Text body"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest/text", strings.NewReader(body))
@@ -810,17 +763,13 @@ func TestHTTPIngestText(t *testing.T) {
 func TestHTTPBundleExport(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	db, err := storage.Open(ctx, filepath.Join(dir, "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(dir, "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	mux := http.NewServeMux()
-	api.New(repo, service.NewCompiler(repo)).WithExportRoot(filepath.Join(dir, "exports")).Register(mux)
+	mux := api.New(repo, service.NewCompiler(repo)).WithExportRoot(filepath.Join(dir, "exports")).Mux()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/compile-jobs", strings.NewReader(`{"bundle":"nanite","generator":"wiki_page","input":"{\"title\":\"Export Page\",\"summary\":\"summary\",\"body\":\"See [[Other Page]].\",\"source\":\"test\"}"}`))
 	rec := httptest.NewRecorder()
@@ -840,8 +789,8 @@ func TestHTTPBundleExport(t *testing.T) {
 		Dir   string   `json:"dir"`
 		Files []string `json:"files"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &exp); err != nil {
-		t.Fatalf("export json: %v", err)
+	if err2 := json.Unmarshal(rec.Body.Bytes(), &exp); err2 != nil {
+		t.Fatalf("export json: %v", err2)
 	}
 	if exp.Dir != exportDir {
 		t.Fatalf("export dir = %q, want %q", exp.Dir, exportDir)
@@ -856,11 +805,11 @@ func TestHTTPBundleExport(t *testing.T) {
 		}
 	}
 	for _, name := range wantFiles {
-		if _, err := os.Stat(filepath.Join(exportDir, name)); err != nil {
-			t.Fatalf("exported file %s: %v", name, err)
+		if _, err2 := os.Stat(filepath.Join(exportDir, name)); err2 != nil {
+			t.Fatalf("exported file %s: %v", name, err2)
 		}
 	}
-	page, err := os.ReadFile(filepath.Join(exportDir, "export-page.md"))
+	page, err := os.ReadFile(filepath.Join(exportDir, "export-page.md")) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("read page: %v", err)
 	}

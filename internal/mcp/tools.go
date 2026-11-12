@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,14 +29,15 @@ type ToolRecorder interface {
 type Options struct {
 	ExportRoot string
 	Recorder   ToolRecorder
+	// Authorize, when set, is called before every tool runs (the mcp module's per-tool
+	// authorization: the caller must hold the tool's scope, see ToolScope). Tests leave it nil.
+	Authorize func(ctx context.Context, tool string) error
 }
 
-func NewServer(repo *storage.Repository, compiler *service.Compiler) *gmcp.Server {
-	return NewServerWithOptions(repo, compiler, Options{})
-}
-
-func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, opts Options) *gmcp.Server {
-	srv := gmcp.NewServer("loom", "0.1.0")
+// RegisterTools registers Loom's tools on srv, the server the Substrate mcp module publishes
+// (mcp.Server(app)). Tool visibility per caller and the loom.mcp scope on the transport are the
+// framework's; the cache is scoped to the caller's verified principal (see callerID).
+func RegisterTools(srv *gmcp.Server, repo *storage.Repository, compiler *service.Compiler, opts Options) {
 	obj := gmcp.ObjectSchema
 	str := func() map[string]any { return map[string]any{"type": "string"} }
 	// cache is the per-caller wiki_* result cache (CW-20260816-0014): search/
@@ -52,12 +54,12 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return map[string]any{"status": "ok", "stats": stats}, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_list", Description: "List Loom wiki bundles.", InputSchema: obj(map[string]any{"caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_list", Description: "List Loom wiki bundles.", InputSchema: gmcp.EmptyObjectSchema(), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		items, err := repo.ListBundles(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_bundle_list", items, budget.Config{}, "%d bundles found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_bundle_list", items, budget.Config{}, "%d bundles found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_get", Description: "Get one Loom wiki bundle.", InputSchema: obj(map[string]any{"slug": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		item, err := repo.GetBundle(ctx, stringArg(args, "slug", ""))
@@ -78,7 +80,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return item, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_search", Description: "Search pages in a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "q": str(), "limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_search", Description: "Search pages in a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "q": str(), "limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		bundle := stringArg(args, "bundle", "nanite")
 		q := stringArg(args, "q", "")
 		limit := numericArg(args["limit"], 25)
@@ -90,7 +92,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_page_search", items, budget.Config{}, "%d pages found. Use loom_page_get for full content."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_page_search", items, budget.Config{}, "%d pages found. Use loom_page_get for full content."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_get", Description: "Get one page by bundle and slug.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		p, err := repo.GetPageBySlug(ctx, stringArg(args, "bundle", "nanite"), stringArg(args, "slug", ""))
@@ -99,7 +101,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return p, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_links", Description: "List links extracted from one page.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str(), "caller_id": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_links", Description: "List links extracted from one page.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		p, err := repo.GetPageBySlug(ctx, stringArg(args, "bundle", "nanite"), stringArg(args, "slug", ""))
 		if err != nil {
 			return nil, err
@@ -108,18 +110,18 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_page_links", links, budget.Config{}, "%d page links found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_page_links", links, budget.Config{}, "%d page links found."), nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_links", Description: "List links extracted across a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_links", Description: "List links extracted across a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		b, err := repo.GetBundle(ctx, stringArg(args, "bundle", "nanite"))
 		if err != nil {
 			return nil, err
 		}
 		limit := 100
 		if v, ok := args["limit"]; ok {
-			id, err := numericID(v)
-			if err != nil {
-				return nil, err
+			id, err2 := numericID(v)
+			if err2 != nil {
+				return nil, err2
 			}
 			limit = int(id)
 		}
@@ -127,9 +129,9 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_bundle_links", links, budget.Config{}, "%d bundle links found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_bundle_links", links, budget.Config{}, "%d bundle links found."), nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_verifications", Description: "List deterministic verification records for one page.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str(), "caller_id": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_verifications", Description: "List deterministic verification records for one page.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		p, err := repo.GetPageBySlug(ctx, stringArg(args, "bundle", "nanite"), stringArg(args, "slug", ""))
 		if err != nil {
 			return nil, err
@@ -138,18 +140,18 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_page_verifications", verifications, budget.Config{}, "%d page verifications found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_page_verifications", verifications, budget.Config{}, "%d page verifications found."), nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_verifications", Description: "List deterministic verification records across a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_bundle_verifications", Description: "List deterministic verification records across a bundle.", InputSchema: obj(map[string]any{"bundle": str(), "limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		b, err := repo.GetBundle(ctx, stringArg(args, "bundle", "nanite"))
 		if err != nil {
 			return nil, err
 		}
 		limit := 100
 		if v, ok := args["limit"]; ok {
-			id, err := numericID(v)
-			if err != nil {
-				return nil, err
+			id, err2 := numericID(v)
+			if err2 != nil {
+				return nil, err2
 			}
 			limit = int(id)
 		}
@@ -157,7 +159,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_bundle_verifications", verifications, budget.Config{}, "%d bundle verifications found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_bundle_verifications", verifications, budget.Config{}, "%d bundle verifications found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_page_conformance", Description: "Check one page against OKF §11 structural conformance (parseable frontmatter + a type field) - distinct from loom_page_verifications' content checks.", InputSchema: obj(map[string]any{"bundle": str(), "slug": str()}, "slug"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		p, err := repo.GetPageBySlug(ctx, stringArg(args, "bundle", "nanite"), stringArg(args, "slug", ""))
@@ -208,7 +210,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return map[string]any{"job": job, "events": events}, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_compile_job_list", Description: "List compile jobs, optionally filtered by bundle and status.", InputSchema: obj(map[string]any{"bundle": str(), "status": str(), "limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_compile_job_list", Description: "List compile jobs, optionally filtered by bundle and status.", InputSchema: obj(map[string]any{"bundle": str(), "status": str(), "limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		filter := storage.JobFilter{Status: stringArg(args, "status", ""), Limit: numericArg(args["limit"], 50)}
 		if bundle := stringArg(args, "bundle", ""); bundle != "" {
 			b, err := repo.GetBundle(ctx, bundle)
@@ -221,7 +223,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_compile_job_list", jobs, budget.Config{}, "%d compile jobs found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_compile_job_list", jobs, budget.Config{}, "%d compile jobs found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_ingest_files", Description: "Ingest markdown/text files into a bundle through deterministic wiki-page compile jobs.", InputSchema: obj(map[string]any{
 		"bundle":          str(),
@@ -250,12 +252,12 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return result, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_ingest_list", Description: "List recent ingest ledger entries.", InputSchema: obj(map[string]any{"limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_ingest_list", Description: "List recent ingest ledger entries.", InputSchema: obj(map[string]any{"limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		limit := 50
 		if v, ok := args["limit"]; ok {
-			id, err := numericID(v)
-			if err != nil {
-				return nil, err
+			id, err2 := numericID(v)
+			if err2 != nil {
+				return nil, err2
 			}
 			limit = int(id)
 		}
@@ -263,7 +265,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_ingest_list", entries, budget.Config{}, "%d ingest entries found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_ingest_list", entries, budget.Config{}, "%d ingest entries found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_ingest_get", Description: "Get one ingest ledger entry by hash.", InputSchema: obj(map[string]any{"hash": str()}, "hash"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		entry, err := repo.GetIngest(ctx, stringArg(args, "hash", ""))
@@ -297,12 +299,12 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return resp, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_directive_list", Description: "List directive ledger entries.", InputSchema: obj(map[string]any{"limit": map[string]any{"type": "number"}, "caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_directive_list", Description: "List directive ledger entries.", InputSchema: obj(map[string]any{"limit": map[string]any{"type": "number"}}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		limit := 50
 		if v, ok := args["limit"]; ok {
-			id, err := numericID(v)
-			if err != nil {
-				return nil, err
+			id, err2 := numericID(v)
+			if err2 != nil {
+				return nil, err2
 			}
 			limit = int(id)
 		}
@@ -310,7 +312,7 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_directive_list", entries, budget.Config{}, "%d directive ledger entries found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_directive_list", entries, budget.Config{}, "%d directive ledger entries found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_directive_get", Description: "Get one directive ledger entry by hash.", InputSchema: obj(map[string]any{"hash": str()}, "hash"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		entry, err := repo.GetDirective(ctx, stringArg(args, "hash", ""))
@@ -319,12 +321,12 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		}
 		return entry, nil
 	}})
-	registerTool(srv, opts, gmcp.Tool{Name: "loom_template_list", Description: "List generator templates.", InputSchema: obj(map[string]any{"caller_id": str()}), Handler: func(ctx context.Context, args map[string]any) (any, error) {
+	registerTool(srv, opts, gmcp.Tool{Name: "loom_template_list", Description: "List generator templates.", InputSchema: gmcp.EmptyObjectSchema(), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		items, err := repo.ListTemplates(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return cacheListResult(cache, stringArg(args, "caller_id", "default"), "loom_template_list", items, budget.Config{}, "%d templates found."), nil
+		return cacheListResult(cache, callerID(ctx), "loom_template_list", items, budget.Config{}, "%d templates found."), nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_template_get", Description: "Get one generator template by name.", InputSchema: obj(map[string]any{"name": str()}, "name"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		tpl, err := repo.GetTemplate(ctx, stringArg(args, "name", ""))
@@ -365,19 +367,18 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		return result, nil
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_fetch_result", Description: "Deep-dive into a wiki_result://<id> pointer left in a truncated search/list tool's hint - retrieves a byte slice of the full, untruncated cached result.", InputSchema: obj(map[string]any{
-		"id":        str(),
-		"caller_id": str(),
-		"offset":    map[string]any{"type": "number"},
-		"length":    map[string]any{"type": "number"},
+		"id":     str(),
+		"offset": map[string]any{"type": "number"},
+		"length": map[string]any{"type": "number"},
 	}, "id"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
 		id := stringArg(args, "id", "")
 		if id == "" {
 			return nil, fmt.Errorf("id is required")
 		}
-		callerID := stringArg(args, "caller_id", "default")
+		caller := callerID(ctx)
 		offset := numericArg(args["offset"], 0)
 		length := numericArg(args["length"], 0)
-		slice, totalSize, err := cache.Fetch(callerID, id, offset, length)
+		slice, totalSize, err := cache.Fetch(caller, id, offset, length)
 		if err != nil {
 			return nil, err
 		}
@@ -385,7 +386,6 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 	}})
 	registerTool(srv, opts, gmcp.Tool{Name: "loom_search_result", Description: "Regex-search a wiki_result://<id> pointer left in a truncated search/list tool's hint, returning matching lines with context - use to locate one specific item (e.g. by slug) inside a large cached result without paging through it by offset.", InputSchema: obj(map[string]any{
 		"id":          str(),
-		"caller_id":   str(),
 		"pattern":     str(),
 		"max_matches": map[string]any{"type": "number"},
 	}, "id", "pattern"), Handler: func(ctx context.Context, args map[string]any) (any, error) {
@@ -394,15 +394,14 @@ func NewServerWithOptions(repo *storage.Repository, compiler *service.Compiler, 
 		if id == "" || pattern == "" {
 			return nil, fmt.Errorf("id and pattern are required")
 		}
-		callerID := stringArg(args, "caller_id", "default")
+		caller := callerID(ctx)
 		maxMatches := numericArg(args["max_matches"], 20)
-		matches, err := cache.Search(callerID, id, pattern, maxMatches)
+		matches, err := cache.Search(caller, id, pattern, maxMatches)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"id": id, "pattern": pattern, "matches": matches}, nil
 	}})
-	return srv
 }
 
 func registerTool(srv *gmcp.Server, opts Options, tool gmcp.Tool) {
@@ -414,8 +413,50 @@ func registerTool(srv *gmcp.Server, opts Options, tool gmcp.Tool) {
 	tool.DestructiveHint = hints.Destructive
 	tool.IdempotentHint = hints.Idempotent
 	tool.OpenWorldHint = false
+	tool.Handler = authorizeTool(tool.Name, tool.Handler, opts.Authorize)
 	tool.Handler = traceTool(tool.Name, tool.Handler, opts.Recorder)
 	srv.RegisterTool(tool)
+}
+
+// Scopes a caller needs, on top of loom.mcp for the endpoint, to call a tool.
+const (
+	ScopeRead  = "loom.read"
+	ScopeWrite = "loom.write"
+)
+
+// ToolScope is the scope a tool needs: loom.read for a read-only tool, loom.write otherwise.
+// It panics for an unknown tool, like registerTool does for one without annotations.
+func ToolScope(name string) string {
+	hints, ok := toolAnnotations[name]
+	if !ok {
+		panic(fmt.Sprintf("mcp: tool %q has no entry in toolAnnotations", name))
+	}
+	if hints.ReadOnly {
+		return ScopeRead
+	}
+	return ScopeWrite
+}
+
+// ToolNames lists every tool Loom registers.
+func ToolNames() []string {
+	names := make([]string, 0, len(toolAnnotations))
+	for n := range toolAnnotations {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func authorizeTool(name string, handler gmcp.ToolHandler, authorize func(context.Context, string) error) gmcp.ToolHandler {
+	if authorize == nil {
+		return handler
+	}
+	return func(ctx context.Context, args map[string]any) (any, error) {
+		if err := authorize(ctx, name); err != nil {
+			return nil, err
+		}
+		return handler(ctx, args)
+	}
 }
 
 func traceTool(name string, handler gmcp.ToolHandler, recorder ToolRecorder) gmcp.ToolHandler {

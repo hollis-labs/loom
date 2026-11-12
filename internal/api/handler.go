@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	libauth "github.com/hollis-labs/libs/security/auth"
+	"github.com/hollis-labs/substrate/apierr"
+
 	"github.com/hollis-labs/loom/internal/compiler"
 	"github.com/hollis-labs/loom/internal/directivex"
 	"github.com/hollis-labs/loom/internal/domain"
@@ -32,8 +35,73 @@ func (h *Handler) WithExportRoot(root string) *Handler {
 	return h
 }
 
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/health", h.health)
+// Scopes the API requires. The owner holds "*".
+const (
+	ScopeRead  = "loom.read"
+	ScopeWrite = "loom.write"
+)
+
+// Route is one served method and path pattern with the scope it needs.
+type Route struct {
+	Method  string
+	Pattern string
+	Scope   string
+}
+
+// Routes is every route the API serves, the single source for the scope table. A request that
+// matches none is refused by the auth guard in enforce mode, so a handler added without a line
+// here is unreachable rather than open. Reads need loom.read; everything that creates or
+// changes data, or runs a compile, needs loom.write.
+func Routes() []Route {
+	r := func(method, pattern string) Route {
+		scope := ScopeWrite
+		if method == http.MethodGet {
+			scope = ScopeRead
+		}
+		return Route{method, pattern, scope}
+	}
+	return []Route{
+		r(http.MethodGet, "/api/status"),
+		r(http.MethodGet, "/api/bundles"), r(http.MethodPost, "/api/bundles"),
+		r(http.MethodGet, "/api/bundles/{slug}"), r(http.MethodPut, "/api/bundles/{slug}"),
+		r(http.MethodGet, "/api/bundles/{slug}/pages"),
+		r(http.MethodGet, "/api/bundles/{slug}/links"),
+		r(http.MethodGet, "/api/bundles/{slug}/verifications"),
+		r(http.MethodGet, "/api/bundles/{slug}/conformance"),
+		r(http.MethodGet, "/api/bundles/{slug}/compile-jobs"), r(http.MethodPost, "/api/bundles/{slug}/compile-jobs"),
+		r(http.MethodPost, "/api/bundles/{slug}/export"),
+		r(http.MethodGet, "/api/pages"),
+		r(http.MethodGet, "/api/pages/{bundle}/{slug}"),
+		r(http.MethodGet, "/api/pages/{bundle}/{slug}/links"),
+		r(http.MethodGet, "/api/pages/{bundle}/{slug}/verifications"),
+		r(http.MethodGet, "/api/pages/{bundle}/{slug}/conformance"),
+		r(http.MethodGet, "/api/compile-jobs"), r(http.MethodPost, "/api/compile-jobs"),
+		r(http.MethodGet, "/api/compile-jobs/{id}"),
+		r(http.MethodGet, "/api/compile-jobs/{id}/events"),
+		r(http.MethodGet, "/api/ingest"), r(http.MethodPost, "/api/ingest"),
+		r(http.MethodPost, "/api/ingest/text"),
+		r(http.MethodGet, "/api/ingest/{hash}"),
+		r(http.MethodGet, "/api/directives"),
+		r(http.MethodPost, "/api/directives/parse"),
+		r(http.MethodPost, "/api/directives/compile"),
+		r(http.MethodGet, "/api/directives/{hash}"),
+		r(http.MethodGet, "/api/templates"), r(http.MethodPost, "/api/templates"),
+		r(http.MethodGet, "/api/templates/{name}"), r(http.MethodPut, "/api/templates/{name}"),
+		r(http.MethodPost, "/api/templates/{name}/render"),
+	}
+}
+
+// RegisterScopes declares the scope of every route on the guard's table.
+func RegisterScopes(t *libauth.ScopeTable) {
+	for _, rt := range Routes() {
+		t.Route(rt.Method, rt.Pattern, rt.Scope)
+	}
+}
+
+// Mux returns the API routes for httphost.Options.Routes. The guard and the CSRF check are
+// outside it (httphost and the identity middleware); /healthz is the framework's.
+func (h *Handler) Mux() *http.ServeMux {
+	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", h.status)
 	mux.HandleFunc("/api/bundles", h.bundles)
 	mux.HandleFunc("/api/bundles/", h.bundle)
@@ -50,10 +118,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/directives/compile", h.directivesCompile)
 	mux.HandleFunc("/api/templates", h.templates)
 	mux.HandleFunc("/api/templates/", h.template)
-}
-
-func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return mux
 }
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
@@ -221,11 +286,11 @@ func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 3 {
 		switch parts[2] {
 		case "links":
-			links, err := h.repo.ListPageLinks(r.Context(), p.ID)
-			respond(w, links, err)
+			links, linkErr := h.repo.ListPageLinks(r.Context(), p.ID)
+			respond(w, links, linkErr)
 		case "verifications":
-			verifications, err := h.repo.ListPageVerifications(r.Context(), p.ID)
-			respond(w, verifications, err)
+			verifications, verErr := h.repo.ListPageVerifications(r.Context(), p.ID)
+			respond(w, verifications, verErr)
 		case "conformance":
 			respond(w, lint.CheckPage(p), nil)
 		default:
@@ -281,16 +346,16 @@ func (h *Handler) job(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		http.Error(w, "invalid job id", http.StatusBadRequest)
+		fail(w, http.StatusBadRequest, "invalid job id")
 		return
 	}
 	if len(parts) == 2 && parts[1] == "events" {
-		if _, err := h.repo.GetJob(r.Context(), id); err != nil {
-			respond(w, nil, err)
+		if _, jobErr := h.repo.GetJob(r.Context(), id); jobErr != nil {
+			respond(w, nil, jobErr)
 			return
 		}
-		events, err := h.repo.ListEvents(r.Context(), id)
-		respond(w, events, err)
+		events, evErr := h.repo.ListEvents(r.Context(), id)
+		respond(w, events, evErr)
 		return
 	}
 	if len(parts) != 1 {
@@ -520,14 +585,14 @@ func (h *Handler) template(w http.ResponseWriter, r *http.Request) {
 func respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			fail(w, http.StatusNotFound, "not found")
 			return
 		}
 		if errors.Is(err, storage.ErrInvalid) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
@@ -536,7 +601,7 @@ func respond(w http.ResponseWriter, v any, err error) {
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	defer func() { _ = r.Body.Close() }()
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		fail(w, http.StatusBadRequest, "invalid json")
 		return false
 	}
 	return true
@@ -567,9 +632,27 @@ func queryLimit(r *http.Request, fallback int) int {
 }
 
 func method(w http.ResponseWriter) {
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	fail(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 func notFound(w http.ResponseWriter) {
-	http.Error(w, "not found", http.StatusNotFound)
+	fail(w, http.StatusNotFound, "not found")
+}
+
+// fail writes the framework's flat {code, message} error body.
+func fail(w http.ResponseWriter, status int, message string) {
+	apierr.Write(w, status, errorCode(status), message, nil)
+}
+
+func errorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	default:
+		return "internal"
+	}
 }

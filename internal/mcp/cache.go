@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
+	libauth "github.com/hollis-labs/libs/security/auth"
 )
 
 // DefaultSoftTruncBytes is the byte threshold above which a wiki_* list-tool
@@ -120,7 +123,7 @@ func (c *ResultCache) Fetch(callerID, id string, offset, length int) (slice stri
 	err = c.db.QueryRow(
 		`SELECT body, byte_size, expires_at FROM wiki_result_cache WHERE id = ? AND caller_id = ?`, id, callerID,
 	).Scan(&body, &byteSize, &expiresAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, fmt.Errorf("cached result %q not found", id)
 	}
 	if err != nil {
@@ -175,7 +178,7 @@ func (c *ResultCache) Search(callerID, id, pattern string, maxMatches int) ([]Ma
 	err := c.db.QueryRow(
 		`SELECT body, expires_at FROM wiki_result_cache WHERE id = ? AND caller_id = ?`, id, callerID,
 	).Scan(&body, &expiresAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("cached result %q not found", id)
 	}
 	if err != nil {
@@ -255,16 +258,23 @@ func (c *ResultCache) Purge() (int, error) {
 //
 // cache may be nil, in which case this behaves exactly like a plain
 // budget.Apply(...) call.
-// defaultCallerID is the sentinel every wiki_* list/search tool falls back
-// to when a caller omits caller_id (see tools.go's stringArg(args,
-// "caller_id", "default") call sites). cacheListResult refuses to cache
-// under this value: the wiki_result_cache table is a single shared SQLite
-// store, not per-process memory, so anything cached under the shared
-// default bucket would be fetchable/searchable by any other caller that
-// also omits caller_id (and later learns the resulting id) - defeating
-// the per-caller isolation this cache exists for. Callers that want the
-// deep-dive-by-id feature must identify themselves with a real caller_id.
+// defaultCallerID is the sentinel callerID returns when a tool call has no verified principal.
+// cacheListResult refuses to cache under this value: the wiki_result_cache table is a single
+// shared SQLite store, not per-process memory, so anything cached under a shared bucket would
+// be fetchable/searchable by any other unidentified caller (and later learns the resulting id) -
+// defeating the per-caller isolation this cache exists for. The deep-dive-by-id feature needs a
+// verified caller.
 const defaultCallerID = "default"
+
+// callerID is the cache owner for a tool call: the verified principal's id, never a value the
+// caller supplies. Without a verified principal it is the shared sentinel, which is never cached
+// under (see cacheListResult) and finds nothing on fetch.
+func callerID(ctx context.Context) string {
+	if p, ok := libauth.FromContext(ctx); ok && p.Verified && strings.TrimSpace(p.ID) != "" {
+		return p.ID
+	}
+	return defaultCallerID
+}
 
 func cacheListResult[T any](cache *ResultCache, callerID, toolName string, items []T, cfg budget.Config, hintTemplate string) budget.Envelope {
 	env := budget.Apply(items, cfg, hintTemplate)

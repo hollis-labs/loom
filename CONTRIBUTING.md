@@ -37,9 +37,11 @@ Add a line to `CHANGELOG.md` under `[Unreleased]`.
 
 ## The one that cannot be undone
 
-**Migrations and stored pages.** The schema is `internal/storage/migrations/*.sql`,
-applied in order to a database users keep. Never edit or renumber a migration
-that has shipped; add a new one. Compiled pages and their provenance are
+**Migrations and stored pages.** The schema is
+`internal/storage/migrations/sqlite/00001_init.sql`, applied by Substrate's
+database module. Until the first release it is the only migration and is edited
+in place; once a release ships, never edit or renumber a migration that has
+shipped; add a new numbered file. Compiled pages and their provenance are
 durable, so a change to compile or frontmatter output should say what happens
 to pages already stored.
 

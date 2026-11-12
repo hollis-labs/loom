@@ -12,28 +12,33 @@ capture inbox, an agent runtime, or a recall store.
 - `docs/architecture.md` is the current-state reference: schema, compile
   pipeline, all three surfaces, and an honest status section on the cross-repo
   pilot.
-- `cmd/loom/main.go` is the single entrypoint — subcommand dispatch, path
-  layout, OTel wiring.
+- `cmd/loom/` is the single entrypoint: `substrate.yaml` is the Substrate
+  manifest and `substrate_wiring.go` is generated from it (`make generate`);
+  `main.go` boots the modules, `config.go` points them at the data directory,
+  `serve.go` builds the handler chain, `cli.go` holds the local commands.
 - `internal/service/` is the one service layer HTTP, CLI and MCP all call;
   `confidence.go` owns the confidence/diff signal callers use to decide write
   versus stage-for-review.
 - `internal/compiler/` owns deterministic-vs-LLM generation and frontmatter
   rendering.
-- `internal/storage/migrations/*.sql` is the schema, in order.
+- `internal/storage/migrations/sqlite/00001_init.sql` is the schema (one goose
+  migration, edited in place until the first release).
 
 ## Commands
 
-CI runs exactly these, and nothing else:
+CI runs these (see `.github/workflows/ci.yml`):
 
 ```bash
 go vet ./...
-go build ./...
-go test ./...
+go run github.com/hollis-labs/substrate/cmd/substrate pins check --app .
+go test -race ./...
+golangci-lint run          # v2.11.4
+python3 scripts/scan-public --ref HEAD
 ```
 
-`make ui-build` runs `npm install` and rewrites the frontend build. CI never
-builds the frontend, and `go build` embeds whatever already sits in
-`internal/webui/dist/` — so do not run it to satisfy a check.
+and builds the frontend (`make ui-build`) first, because `go build` embeds
+whatever sits in `internal/webui/dist/`. Local runs use a free port: set
+`httphost.addr` in the file named by `SUBSTRATE_CONFIG`.
 
 ## Boundaries
 
@@ -43,15 +48,22 @@ fails to compile against an empty directory — which broke CI from the first pu
 until `0d8981e`. `make clean` preserves the placeholder for the same reason.
 
 The MCP result cache is one shared SQLite table across processes, not
-per-process memory, so it must never cache under the `"default"` caller_id
-sentinel — a shared bucket would let one caller read another's results.
-`TestCacheListResult_NoCacheForDefaultCallerID` guards this.
+per-process memory. Its owner is the verified principal (`callerID(ctx)` in
+`internal/mcp/cache.go`), never a tool argument, and it must never cache under
+the `"default"` sentinel (no verified principal) — a shared bucket would let
+one caller read another's results. `TestCacheListResult_NoCacheForDefaultCallerID`
+and `TestMCPPageSearchCacheDeepDive` guard this.
 
 The CLI resolves project-local `.loom/` paths by default (`resolveLayout` in
-`cmd/loom/main.go`), so which database you get depends on the working directory.
+`cmd/loom/cli.go`), so which database you get depends on the working directory.
 Anything spawning `loom` from another directory must pass `-db`.
 
-The HTTP listener defaults to `127.0.0.1:8080` on purpose: tokenless loopback
-use can trigger paid LLM calls. Do not change the default to a wildcard address;
-deployments that need one pass `-addr` explicitly (the Dockerfile does), and
-must provide `LOOM_API_TOKEN` or `-token`.
+Auth is the Substrate guard in `enforce` mode and is not configurable away:
+every `/api/` route needs a scope in `api.Routes()` (a route without a line there
+is unreachable, not open), `/mcp` needs `loom.mcp`, and `internal/hostguard`
+refuses Host names that are not loopback or in `loom.allowed_hosts`. The
+listener defaults to `127.0.0.1:8080`; a wildcard address is for a deployment
+that has completed first-run setup. New settings go in `internal/settings` (an
+unknown key must stop startup), never in `os.Getenv`; the only environment
+inputs are `SUBSTRATE_CONFIG` and the XDG/HOME variables the path layout reads.
+Pins are edited only in Substrate's `bom/bom.yaml`; `pins check` must pass.

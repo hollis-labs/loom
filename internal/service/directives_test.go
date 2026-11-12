@@ -10,6 +10,7 @@ import (
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 // newDirectiveTestRepo returns a fresh, migrated in-memory-backed repository
@@ -18,14 +19,11 @@ import (
 func newDirectiveTestRepo(t *testing.T) *storage.Repository {
 	t.Helper()
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	return storage.NewRepository(db)
 }
 

@@ -1,0 +1,278 @@
+# Conversion notes: Loom onto Substrate
+
+This records what changed when the Go backend moved onto Substrate, what the framework did not cover, and what an
+operator, a client and the frontend need to do. It is a clean break for code and compatibility: no shims, no fallbacks. The data is not: Loom is deployed, so
+every workspace database is migrated with no loss by `loom migrate-data` (below).
+
+## Gaps
+
+Things Substrate did not provide, or choices that need the owner. Each says what was done.
+
+1. **Identity has no offline bootstrap, so a stdio-only `loom mcp` cannot get its key without a server. OPEN, needs a
+   decision.** In `enforce` mode `loom mcp` must present an API key (`mcp.stdio_token_file`), and a key can only be
+   created through the identity module's HTTP API by a signed-in administrator. Loom's main agent use is
+   `loom mcp` spawned by an MCP host against a project-local `.loom/` database, often with no server running.
+   Today that means: run `loom serve` once on that database, `POST /api/setup`, create a key with
+   `POST /api/identity/keys`, save it to a file, point `mcp.stdio_token_file` at it. The same applies to every
+   project-local database. Options: (a) accept this; (b) a Substrate command to create the first owner and a key
+   offline (`substrate`-provided CLI on the identity module); (c) a per-app way to run stdio under a local-file
+   trust (not available: `auth.mode` is per process, and `off` would also open `/api/`). I did (a) and did not
+   invent (b) or (c).
+2. **No shared Host check.** Guide section 5.7 asks the app to refuse Host headers that are not loopback or listed,
+   to stop DNS rebinding, and to drop forwarding headers. Substrate has no module for it, so
+   `internal/hostguard` is a copy of Basalisk's, with the flat error body and `loom.allowed_hosts`. Two copies of
+   a security check is a smell: a Substrate `hostguard` option on `httphost` would replace both.
+3. **The manifest cannot carry the app's own config.** `config:` accepts only catalogue modules, so the `loom:` block
+   has no defaults in `substrate.yaml`. It is read from `app.Config["loom"]`, which the `config` module fills from the
+   `SUBSTRATE_CONFIG` file. Defaults are in `internal/settings`; a bad value or an unknown key stops startup naming
+   the key. (Same as Basalisk gap 2.)
+4. **The `config` override merges one level deep.** An override of `database.sqlite` replaces the whole block, so it
+   must repeat `path`. Flat blocks (`identity`, `mcp`, `loom`) merge key by key. (Basalisk gap 3.)
+5. **No hook to resolve run-time paths.** The data directory is only known at run time (project-local `.loom/`, the
+   `-db`/`-workspace`/`--no-project` options, XDG), but the manifest compiles to a constant. `cmd/loom/config.go`
+   rewrites the generated config JSON (database path, identity key file, secrets directory) before `boot.Start`, and
+   the command line is pre-scanned for the data options. (Basalisk gap 4.)
+6. **No pre-migration hook for the legacy guard.** The database module migrates as soon as it opens the file, so
+   `storage.RefuseLegacy` runs in `main` before `boot.Start`; it also reads a `database.sqlite.path` override from
+   the `SUBSTRATE_CONFIG` file, duplicating the config module's merge rule. (Basalisk gap 5.)
+7. **Frontend cannot be installed here.** `frontend/package.json` depends on `@hollis-labs/sysop-ui` as
+   `github:hollis-labs/sysop-ui#v0.9.0` (a git dependency, fetched over SSH); `npm ci` fails with "Could not read
+   from remote repository" on this host, so typecheck and build were not run. Moving to `app-shell` and the
+   BOM-pinned kits (from the npm registry) is the GUI track; see `frontend/CONVERSION_NOTES.md`. CI builds the UI
+   before `go test`; it will stay red until that lands.
+8. **`scan-public --ref HEAD` is not clean, and part of it is in published history. OPEN, needs the owner.** 16
+   findings on the pre-conversion history plus tree (before any conversion commit):
+   - tree and history, `internal/llm/redact_test.go`: an AWS key, a GitHub token, a JWT and a PEM header, invented
+     inputs for the redaction tests (4 findings, +4 from gitleaks). **Fixed in the tree**: the test now builds them
+     from parts at run time, so no secret-shaped literal is left (`--tree` is clean). They stay in history, where
+     they are allowlist candidates: invented inputs for a redactor, not credentials;
+   - history only: the commit message of `4f2be4b` names a build host; `.cerberus.yaml` (`d48dd40`)
+     and `loom.cerberus.yaml` (`57fe127`) carry a macOS home path (`/Users/<name>`); `internal/server/security_test.go`
+     (`ae90538`) carries a private IPv4 as a non-loopback test address.
+   Options: an owner-reviewed `scan-public.allow` (as Basalisk has for its fixtures; the history entries pinned with
+   `PATH@COMMIT`), or a history rewrite (expensive and it changes every commit hash on a public repo). I did neither;
+   no `scan-public.allow` was created. The program-wide decision is with the owner.
+9. **Not ported, not invented.** `loom directives compile` never existed as a CLI command (the dispatch path is HTTP
+   and MCP only); it still does not. `wiki_links.relation` is still always `references`.
+
+## Decisions made in the port
+
+- **Accounts and keys come from the identity module.** The single shared bearer token and the tokenless loopback mode
+  are gone. Even on loopback, every API and MCP request needs a signed-in session or a key. This is a posture change
+  for a developer tool and it is the intended one.
+- **Scopes:** `loom.read` (GETs), `loom.write` (POST and PUT, including compile, ingest, export and the
+  parse/render calls that are POSTs), `loom.mcp` (the endpoint). Per tool, the mcp module's `Authorize` is called
+  before every tool: a read-only tool (by its annotation) needs `loom.read`, any other `loom.write`, on top of
+  `loom.mcp`. The table is built from `toolAnnotations`, so a new tool cannot be unmapped.
+- **Anthropic key:** `secrets.env` is on in Loom's manifest, so the old environment variable keeps working as
+  `loom.llm_api_key_ref: env://ANTHROPIC_API_KEY`; `keychain://`, `file://` and `op://` references work too.
+- **MCP result cache owner** is the verified principal subject, no longer the `caller_id` argument. The argument
+  existed only so clients could name themselves, and could be spoofed. A call with no verified principal is never
+  cached and cannot fetch.
+- **Local commands keep working on the database file** without HTTP, so without sign-in: they are filesystem-trust
+  tools, as before.
+- **Dropped config:** the `config.yaml` sections nothing read (`sources`, `drafts`, `nanite`, `ingest`).
+- **Data is migrated, not reset** (owner ruling: every deployed app migrates). See "Data migration".
+
+## Old to new
+
+### Environment and flags
+
+| Old | New |
+|---|---|
+| `serve -addr` (default `127.0.0.1:8080`) | `httphost.addr` (default `127.0.0.1:8080`) |
+| `LOOM_API_TOKEN`, `serve -token` | removed: sign in, or send an API key |
+| `LOOM_CORS_ORIGINS`, `serve -cors-origin` | removed: same-origin writes (identity); `identity.allowed_origins` for a proxy |
+| `ANTHROPIC_API_KEY` | `loom.llm_api_key_ref: env://ANTHROPIC_API_KEY` (or a keychain/file/op reference) |
+| `config.yaml` `llm.model` | `loom.llm_model` |
+| `config.yaml` `paths.export_dir` | `loom.export_dir` (default `<data>/exports`); `paths.corpus_dir` and `media_dir` were unused |
+| `config.yaml` `filters.redact_patterns`, `filters.git_exclude_paths` | `loom.redact_patterns`, `loom.git_exclude_paths` |
+| `LOOM_OTEL_ENABLED`, `OTEL_ENABLED`, `serve/mcp -otel` | `loom.otel_enabled` |
+| `LOOM_OTEL_METRICS_ENABLED`, `OTEL_METRICS_ENABLED`, `-otel-metrics` | `loom.otel_metrics` |
+| `-otel-endpoint` | `loom.otel_endpoint` |
+| `-db`, `-workspace`, `-project`, `--no-project` | unchanged |
+| `loom migrate` | removed: the database module migrates the schema at start; `loom migrate-data` copies pre-Substrate data |
+| `loom config` (merged config.yaml) | the skeleton's `loom config` (the merged Substrate config) |
+| (new) | `SUBSTRATE_CONFIG`: YAML file holding any override above |
+
+### Paths and files
+
+| Old | New |
+|---|---|
+| `<data>/workspaces/<name>/main.db` (project-local `.loom/` or XDG) with `schema_version` | `<data>/workspaces/<name>/loom.db`, beside it; the old file is never written and stays as the rollback |
+| (none) | `identity-signing.key` and its `.jwks.json`, and `secrets/`, in the data directory |
+| `<config dir>/config.yaml`, `./config.yaml` | removed |
+
+### HTTP
+
+| Old | New |
+|---|---|
+| `GET /api/health` (open with a token) | `GET /healthz` `{status, checks}`, public |
+| errors: plain text from `http.Error` | `{code, message, details?}`, with `code` such as `bad_request`, `not_found`, `unauthorized`, `forbidden` |
+| `Authorization: Bearer <LOOM_API_TOKEN>` | a session cookie (browser) or `Authorization: Bearer key_...` / a minted token |
+| every other `/api/` path | unchanged paths, methods and bodies |
+| (new) | `/api/setup`, `/api/login`, `/api/logout`, `/api/password`, `/api/identity/*`, `/api/token`, `/api/pair` |
+
+### MCP
+
+| Old | New |
+|---|---|
+| tools take an optional `caller_id` | the argument is gone; the cache owner is the verified principal |
+| `/mcp` needs the shared token | `/mcp` needs a verified credential holding `loom.mcp`; each tool also needs `loom.read` (read tools) or `loom.write` |
+| `loom mcp` trusts its launcher | `loom mcp` needs `mcp.stdio_token_file` naming a key that holds `loom.mcp` (gap 1) |
+| tool names, schemas (apart from `caller_id`), annotations | unchanged |
+
+## For clients
+
+Every caller of the old API changes how it authenticates; the paths and bodies stay.
+
+- A router or agent (Fragments Engine's router, Nanite's Curator and Weaver, any MCP host): create an API key with
+  scopes `loom.mcp loom.read loom.write` (drop `loom.write` for a read-only caller) and send it as `Authorization: Bearer key_...`. Stop sending `caller_id`.
+- An MCP host that spawns `loom mcp`: add `mcp.stdio_token_file` to the `SUBSTRATE_CONFIG` file it launches Loom
+  with, and keep passing `-db` (gap 1).
+- The Sysop UI: see `frontend/CONVERSION_NOTES.md`.
+
+## For the frontend
+
+- **Errors** are `{code, message, details?}`, not plain text. Read `message`. A 401 means sign in (there is no token
+  prompt any more).
+- **Writes** must send `X-Requested-With` (any non-empty value) on every `POST` and `PUT`. Browsers send `Origin`
+  themselves and it must be the page's own.
+- **Sign-in:** `GET /api/setup` reports `setup_required`; `POST /api/setup {display_name, username, password}` makes the
+  owner and signs in; `POST /api/login {username, password}` signs in; `POST /api/logout` ends the session. The
+  identity module has no UI: the setup and sign-in screens are the app's.
+- **Scopes:** a user without `loom.read` gets 403 on every API route; without `loom.write` on every change.
+- **Dev proxy:** the backend default port is 8080; set `httphost.addr` in the `SUBSTRATE_CONFIG` file to move it.
+
+## Data migration
+
+Loom's data is one SQLite file per workspace (`<data>/workspaces/<name>/main.db`; `-db` names one directly). The
+database module opens exactly one store per process, and Loom never has two workspaces open at once (a process
+serves or runs one workspace, picked by `-workspace`), so the layout needs nothing from the framework: each
+workspace maps to one run, as before. The only new rule is the file name.
+
+- New schema file: `loom.db` beside the old `main.db` (an explicit `-db X` is used literally). Starting on a
+  data directory whose `main.db` holds the old layout and has no `loom.db` stops with a message naming
+  `loom migrate-data`; it never shows an empty Loom. An old-layout file reached any other way (`-db`,
+  `SUBSTRATE_CONFIG`) is refused the same way.
+- `loom migrate-data [--all] [--from OLD --to NEW]` (`cmd/loom/migrate.go`, `internal/storage/legacy.go`) runs
+  before the modules start. It opens the old file read-only, requires all nine old migrations in `schema_version`,
+  builds the new file under a temporary name with the goose schema, copies every table by column name inside one
+  transaction (keys preserved; the new schema's seed rows are replaced by the old rows, so an edited or deleted
+  seed stays as it was), compares per-table row counts, runs `integrity_check` and `foreign_key_check`, folds the
+  WAL and only then renames the file into place. A failure leaves nothing at the target; a second run refuses
+  because the target exists. The old file is not written, so rollback is: stop, point the previous build at the
+  old data directory (`loom.db` can stay or go).
+- Copied: `wiki_bundles`, `wiki_pages`, `wiki_links`, `wiki_verifications`, `compile_jobs`, `compile_events`,
+  `directive_ledger`, `templates`, `ingest_ledger`. Not copied, on purpose: `wiki_result_cache` (a TTL cache keyed by
+  the old caller-supplied `caller_id`, which no longer means anything). Accounts and keys are new (identity).
+- Tests (`internal/storage/legacy_test.go`, `cmd/loom/boot_test.go`) use synthetic fixtures built from the nine
+  old migrations (`internal/storage/testdata/legacy`): all tables, keys, links to pages, the `by` column, the
+  old file byte-for-byte unchanged, the refusal paths and a real start on the migrated file.
+- **Not yet done:** the rehearsal on a copy of the live files. It needs a copy made with the SQLite online backup
+  (never put in the repo, a fixture, a log or a mail); row counts per table, integrity and foreign-key checks and the
+  measured duration go here when it has run.
+
+## The live instance and the cutover outline
+
+What is known (from the owner side, not from touching the instance: it was not opened, copied or contacted):
+
+- A deployed `loom serve --no-project` runs under a service manager on `127.0.0.1:8092`, and at least one
+  `loom mcp` process is live against `~/.local/share/loom/workspaces/default/main.db`. The data directory is small
+  (about 156 KB).
+- What the code reads: `<data>/workspaces/<name>/main.db`; the user config `<config dir>/config.yaml` and a project
+  `./config.yaml` (only `paths.export_dir`, `filters.*` and `llm.model` were consumed); the state directory holds the
+  selected workspace; exports are written under `paths.export_dir`.
+- Clients to list and change (the first two are confirmed by the owner side, the rest are what the README names
+  and must be confirmed before cutover): HTTP callers of `:8092` (anything holding `LOOM_API_TOKEN`, anything
+  relying on `LOOM_CORS_ORIGINS`); each MCP host config that spawns `loom mcp` (it now needs `mcp.stdio_token_file`
+  and no `caller_id`); shell users of the CLI (unchanged except `migrate`/`config`); Fragments Engine's router and
+  Nanite's Curator and Weaver, if they call Loom.
+
+**Project-local databases.** The served `workspaces/<name>/main.db` files are not all of Loom's data: any project can
+have its own `.loom/` directory (the CLI and `loom mcp` default to project-local paths), and agents use Loom over
+stdio against those with no server running. "All data migrated" covers each of them. How they are met:
+
+- Never silently and never on first sight: an old-layout `main.db` (workspace or `.loom/`) without a `loom.db`
+  beside it makes every command, `loom mcp` included, stop at start with the message naming `loom migrate-data`.
+  An agent launching `loom mcp` in an unmigrated project therefore sees the MCP server fail to start with that
+  message on stderr and exit status 1 (the host reports a failed server); nothing is created or changed.
+- The owner runs `loom migrate-data` in each project (it works on the project-local layout by the current
+  directory, or `--from/--to`), or `--all` for the served workspaces. An inventory of the `.loom/` directories on the
+  host is needed to plan the sweep: **asked of the driver**.
+- Identity tables and the signing key live in the database and beside it, so a project-local database would carry
+  its own owner, keys and signing key: one identity per project, or none. Whether stdio on a project-local file
+  runs under filesystem trust (like the local commands) or must present a key is the owner's security-model
+  question (Gap 1); nothing is built on either answer yet.
+
+Outline, to be approved by the owner before any cutover:
+
+1. **Data:** `loom migrate-data --all` on a copy first (the rehearsal above), then on the live files with the service
+   stopped; then every project-local database from the inventory. Counts and checks must match; old `main.db`
+   files stay.
+2. **Clients:** per client, new credential (API key with `loom.read loom.write loom.mcp`), config change, owner:
+   MCP hosts add `mcp.stdio_token_file`; HTTP callers send `Authorization: Bearer key_...`; stop sending
+   `caller_id`. Run each against the new build before declaring done. Gap 1 (stdio bootstrap) must be decided first.
+3. **Config and supervision:** the service descriptor drops `--addr`, `LOOM_OTEL_ENABLED`, `ANTHROPIC_API_KEY`
+   and gets `SUBSTRATE_CONFIG` (httphost.addr `127.0.0.1:8092`, `loom.otel_enabled`, `loom.llm_api_key_ref`), and the
+   old `config.yaml` values move into the `loom:` block. Hand to the Cerberus owner.
+4. **Deploy:** build in CI, install from GitHub (`fleet-install deploy loom --commit <sha>`, `--dry-run` first),
+   keep the previous release, check `/healthz`.
+5. **Rollback:** relink the previous release, restart it on the unchanged old data directory.
+6. **Verify live:** first-run setup (owner), one write, one read through the real URL, an unknown `Host` refused,
+   every MCP host listing tools.
+
+## For the operator
+
+- **Migrate the data before the first start:** `loom migrate-data` (or `--all`). Startup refuses an unmigrated
+  old database and says so. First-run setup creates the owner afterwards.
+- Health is `GET /healthz` (database included).
+- `loom.cerberus.yaml` no longer carries `--addr`, `LOOM_OTEL_ENABLED` or `ANTHROPIC_API_KEY`: put
+  `httphost.addr`, `loom.otel_enabled` and `loom.llm_api_key_ref` in the `SUBSTRATE_CONFIG` file the descriptor names.
+  The descriptor belongs to Cerberus; the change in this repo's copy needs to reach the live one.
+- Secrets: the `secrets/` directory and the signing key are private to the user. Losing the signing key ends minted
+  tokens, not sessions or keys.
+- Docker: the image has no baked-in token any more; mount a `SUBSTRATE_CONFIG` file that sets
+  `httphost.addr: "0.0.0.0:8080"` (the default is loopback) and complete first-run setup.
+
+
+## Rehearsal on a copy of the live file (2026-11-12)
+
+Input: an SQLite online-backup copy of the live `workspaces/default/main.db` (quick_check ok, sha256 begins
+8b689afe75feb54c), copied into a scratch directory with HOME and every XDG directory pointed at that directory.
+No row content was copied anywhere else.
+
+- Start on the old file: refused, message names `loom migrate-data`.
+- `loom migrate-data --from main.db --to loom.db`: 14 ms. Per-table counts old/new: wiki_bundles 1/1, templates 1/1,
+  wiki_pages, wiki_links, wiki_verifications, compile_jobs, compile_events, ingest_ledger, directive_ledger 0/0.
+  Keys preserved (the bundle and template ids are the same). `integrity_check` ok, `foreign_key_check` clean.
+- The old file's sha256 is unchanged after the run. A second run refuses (target exists). `loom status` on the new
+  file reads the migrated data.
+- `wiki_result_cache` is not copied: it is a TTL cache and repopulates on use (accepted by the driver).
+- The served instance holds almost nothing, so this proves the mechanics, not volume.
+
+## Test isolation
+
+A manual run with an explicit `-db` and `--no-project` placed the identity signing key and `secrets` state under the
+XDG default data directory instead of beside the database. Fixed: with `-db` they are placed beside that file.
+Every test in `cmd/loom` runs with HOME and the XDG directories in a temp directory (`TestMain`), and a test fails if
+the default layout resolves to the real home.
+
+## Cutover: machines and clients
+
+Two machines, two kinds of client.
+
+- **The server host:** the user unit `loom serve --no-project --addr 127.0.0.1:8092` (no token in the unit; an
+  environment file exists and was not opened). The caller of that port is not known. At cutover it needs the new
+  binary, `loom migrate-data --all` on the stopped service, a first-run setup (owner) and API keys for each caller.
+  The one stdio client that matters is the Tether gateway, which runs `loom mcp --no-project -db <workspace>/main.db`
+  as a child to serve the loom tools to agents: under enforced auth its launch config needs `mcp.stdio_token_file`
+  naming a file with an API key holding `loom.mcp` plus `loom.read` and/or `loom.write`, and the `-db` flag moves to
+  the migrated `loom.db`. That is a Tether-side change, routed by the driver. How that key is first created without a
+  server is Gap 1.
+- **The owner's laptop:** locally launched agent sessions each run `loom mcp --no-project -db
+  <repo>/.loom/data/workspaces/default/main.db` from an installed binary, and a second data directory exists there.
+  Each of those project-local databases is a separate old database: migrate each with `loom migrate-data`, on that
+  machine, then repoint the launch configs. An inventory of `.loom` directories on the server host found none.
+- Tokens and CORS: the old shared API token holders (`LOOM_API_TOKEN` / `-token`) are replaced by per-caller API
+  keys; there is no CORS setting to carry over.

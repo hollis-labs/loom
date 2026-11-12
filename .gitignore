@@ -16,6 +16,14 @@ frontend/dist/
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
 
+# Local config and data: never commit
+substrate.local.yaml
+loom.local.yaml
+.loom/
+*.db
+*.db-shm
+*.db-wal
+
 # IDE
 .idea/
 .vscode/

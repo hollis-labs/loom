@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/budget"
-	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 // setupCacheTest opens a fresh migrated temp-file SQLite DB (so the real
@@ -20,14 +20,11 @@ import (
 func setupCacheTest(t *testing.T, cfg ResultCacheConfig) (*ResultCache, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	return NewResultCache(db, cfg), db
 }
 
@@ -146,8 +143,8 @@ func TestResultCache_Purge(t *testing.T) {
 	}
 
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	if _, err := db.Exec(`UPDATE wiki_result_cache SET expires_at = ? WHERE id = ?`, past, idExpired); err != nil {
-		t.Fatalf("force-expire: %v", err)
+	if _, err2 := db.Exec(`UPDATE wiki_result_cache SET expires_at = ? WHERE id = ?`, past, idExpired); err2 != nil {
+		t.Fatalf("force-expire: %v", err2)
 	}
 
 	n, err := cache.Purge()

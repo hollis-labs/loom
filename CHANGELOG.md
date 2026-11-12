@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed (breaking: moved onto Substrate; see docs/conversion-notes.md)
+
+- The backend is a Substrate app. Authentication is identity accounts, API keys and
+  the auth guard (`loom.read`, `loom.write`, `loom.mcp`); `LOOM_API_TOKEN`,
+  `-token`, `LOOM_CORS_ORIGINS` and tokenless loopback are gone.
+- Errors are `{code, message, details?}`; `GET /api/health` is `GET /healthz`.
+- Configuration is the `SUBSTRATE_CONFIG` file (`loom:` block); `config.yaml`,
+  `-addr`, `ANTHROPIC_API_KEY`, `LOOM_OTEL_*` and `loom migrate` are gone.
+- One goose migration replaces the nine numbered files. `loom migrate-data` copies an
+  existing workspace database (`main.db`) into the new schema (`loom.db`, beside it,
+  old file untouched); an unmigrated old database is refused at start.
+- MCP tools no longer take `caller_id`; the result cache is keyed by the verified
+  principal.
+
 ### Security
 
 - Go toolchain 1.26.10 (`go` directive and CI pin) for GO-2026-6809 (crypto/x509); no behavior change.

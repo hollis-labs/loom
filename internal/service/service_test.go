@@ -13,18 +13,16 @@ import (
 	"github.com/hollis-labs/loom/internal/domain"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 func TestCompileJobCompletesAndStoresPage(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	compiler := service.NewCompiler(repo)
 
@@ -49,17 +47,14 @@ func TestCompileJobCompletesAndStoresPage(t *testing.T) {
 
 func TestCompileUsesStoredTemplate(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
-	if _, err := repo.UpsertTemplate(ctx, domain.Template{Name: "wiki_page.sourceful", Generator: "wiki_page", Body: "# {{title}}\n\n_Source: {{source}}_\n\n{{body}}"}); err != nil {
-		t.Fatalf("UpsertTemplate: %v", err)
+	if _, err2 := repo.UpsertTemplate(ctx, domain.Template{Name: "wiki_page.sourceful", Generator: "wiki_page", Body: "# {{title}}\n\n_Source: {{source}}_\n\n{{body}}"}); err2 != nil {
+		t.Fatalf("UpsertTemplate: %v", err2)
 	}
 	input, err := json.Marshal(compiler.Request{Title: "Templated", Body: "Body text", Source: "test-source", Template: "wiki_page.sourceful"})
 	if err != nil {
@@ -83,14 +78,11 @@ func TestCompileUsesStoredTemplate(t *testing.T) {
 
 func TestCompileFailureStoresFailedJobAndEvents(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	input, err := json.Marshal(compiler.Request{Title: "Missing Template", Body: "Body", Template: "wiki_page.missing"})
 	if err != nil {
@@ -125,14 +117,11 @@ func TestCompileFailureStoresFailedJobAndEvents(t *testing.T) {
 
 func TestRequestFromDirectivesIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	compiler := service.NewCompiler(repo)
 	text := "::config generator=wiki_page, slug=directive-page\n::note Directive Page"
@@ -162,14 +151,11 @@ func TestRequestFromDirectivesIsIdempotent(t *testing.T) {
 
 func TestIngestInvalidInputsUseStorageInvalid(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	compiler := service.NewCompiler(storage.NewRepository(db))
 
 	if _, err := compiler.IngestFiles(ctx, "nanite", nil, "fixture", nil, nil); !errors.Is(err, storage.ErrInvalid) {
@@ -182,18 +168,15 @@ func TestIngestInvalidInputsUseStorageInvalid(t *testing.T) {
 
 func TestIngestFilesIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "runtime.md")
-	if err := os.WriteFile(path, []byte("# Runtime\n\nToken abc123"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	if err2 := os.WriteFile(path, []byte("# Runtime\n\nToken abc123"), 0o600); err2 != nil {
+		t.Fatalf("write: %v", err2)
 	}
 	repo := storage.NewRepository(db)
 	compiler := service.NewCompiler(repo)
@@ -226,14 +209,11 @@ func TestIngestFilesIsIdempotent(t *testing.T) {
 
 func TestCompileConfidenceNewPage(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 
@@ -265,14 +245,11 @@ func TestCompileConfidenceNewPage(t *testing.T) {
 
 func TestCompileConfidenceIdenticalOverwrite(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 	body := "# Confidence Overwrite\n\nSame line one.\nSame line two.\n"
@@ -280,8 +257,8 @@ func TestCompileConfidenceIdenticalOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if _, err := comp.Request(ctx, "nanite", "wiki_page", string(input)); err != nil {
-		t.Fatalf("first Request: %v", err)
+	if _, err2 := comp.Request(ctx, "nanite", "wiki_page", string(input)); err2 != nil {
+		t.Fatalf("first Request: %v", err2)
 	}
 
 	job, err := comp.Request(ctx, "nanite", "wiki_page", string(input))
@@ -314,14 +291,11 @@ func TestCompileConfidenceIdenticalOverwrite(t *testing.T) {
 
 func TestCompileConfidenceSubstantialOverwrite(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	comp := service.NewCompiler(repo)
 
@@ -330,8 +304,8 @@ func TestCompileConfidenceSubstantialOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal first: %v", err)
 	}
-	if _, err := comp.Request(ctx, "nanite", "wiki_page", string(firstInput)); err != nil {
-		t.Fatalf("first Request: %v", err)
+	if _, err2 := comp.Request(ctx, "nanite", "wiki_page", string(firstInput)); err2 != nil {
+		t.Fatalf("first Request: %v", err2)
 	}
 
 	secondBody := "# Doc\n\nZulu different line.\nYankee other line.\nXray unrelated line.\nWhiskey new line.\nVictor extra line.\nUniform more line.\nTango final line."
@@ -375,14 +349,11 @@ func TestCompileConfidenceSubstantialOverwrite(t *testing.T) {
 
 func TestIngestTextIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
+	db, err := storagetest.Open(ctx, filepath.Join(t.TempDir(), "loom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if err := storage.Migrate(ctx, db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	repo := storage.NewRepository(db)
 	compiler := service.NewCompiler(repo)
 

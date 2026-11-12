@@ -13,8 +13,10 @@ import (
 	"github.com/hollis-labs/loom/internal/api"
 	"github.com/hollis-labs/loom/internal/exporter"
 	"github.com/hollis-labs/loom/internal/mcp"
+	"github.com/hollis-labs/loom/internal/mcp/mcptest"
 	"github.com/hollis-labs/loom/internal/service"
 	"github.com/hollis-labs/loom/internal/storage"
+	"github.com/hollis-labs/loom/internal/storage/storagetest"
 )
 
 // Every exposed surface uses the same confinement boundary and no live state.
@@ -27,22 +29,19 @@ func TestExportConfinementAcrossSurfaces(t *testing.T) {
 				base := filepath.Join(home, "exports")
 				outside := filepath.Join(home, "catalog")
 				for _, dir := range []string{base, outside} {
-					if err := os.MkdirAll(dir, 0o755); err != nil {
+					if err := os.MkdirAll(dir, 0o750); err != nil {
 						t.Fatal(err)
 					}
 				}
 				victim := filepath.Join(outside, "index.md")
-				if err := os.WriteFile(victim, []byte("protected"), 0o644); err != nil {
+				if err := os.WriteFile(victim, []byte("protected"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				db, err := storage.Open(context.Background(), filepath.Join(home, "loom.db"))
+				db, err := storagetest.Open(context.Background(), filepath.Join(home, "loom.db"))
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer db.Close()
-				if err := storage.Migrate(context.Background(), db); err != nil {
-					t.Fatal(err)
-				}
 				repo := storage.NewRepository(db)
 				dir := ""
 				allowed := false
@@ -63,19 +62,19 @@ func TestExportConfinementAcrossSurfaces(t *testing.T) {
 					dir = "../catalog"
 				case "symlink-dir":
 					dir = "escape/new"
-					if err := os.Symlink(outside, filepath.Join(base, "escape")); err != nil {
-						t.Fatal(err)
+					if err2 := os.Symlink(outside, filepath.Join(base, "escape")); err2 != nil {
+						t.Fatal(err2)
 					}
 				case "symlink-file":
 					dir = "."
-					if err := os.Symlink(victim, filepath.Join(base, "index.md")); err != nil {
-						t.Fatal(err)
+					if err2 := os.Symlink(victim, filepath.Join(base, "index.md")); err2 != nil {
+						t.Fatal(err2)
 					}
 				case "hardlink-file":
 					dir = "."
 					allowed = true
-					if err := os.Link(victim, filepath.Join(base, "index.md")); err != nil {
-						t.Fatal(err)
+					if err2 := os.Link(victim, filepath.Join(base, "index.md")); err2 != nil {
+						t.Fatal(err2)
 					}
 				case "missing-root":
 					base = ""
@@ -84,11 +83,10 @@ func TestExportConfinementAcrossSurfaces(t *testing.T) {
 				case "exporter":
 					_, err = exporter.ExportBundle(context.Background(), repo, "nanite", dir, base)
 				case "mcp":
-					srv := mcp.NewServerWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: base})
+					srv := mcptest.NewWithOptions(repo, service.NewCompiler(repo), mcp.Options{ExportRoot: base})
 					_, err = srv.CallTool(context.Background(), "loom_export_bundle", map[string]any{"bundle": "nanite", "dir": dir})
 				case "http":
-					mux := http.NewServeMux()
-					api.New(repo, service.NewCompiler(repo)).WithExportRoot(base).Register(mux)
+					mux := api.New(repo, service.NewCompiler(repo)).WithExportRoot(base).Mux()
 					body, _ := json.Marshal(map[string]string{"dir": dir})
 					rec := httptest.NewRecorder()
 					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/bundles/nanite/export", strings.NewReader(string(body))))
@@ -109,7 +107,7 @@ func TestExportConfinementAcrossSurfaces(t *testing.T) {
 				if !allowed && !strings.Contains(err.Error(), "export") {
 					t.Fatalf("missing export refusal: %v", err)
 				}
-				data, err := os.ReadFile(victim)
+				data, err := os.ReadFile(victim) //nolint:gosec // test fixture path under t.TempDir
 				if err != nil || string(data) != "protected" {
 					t.Fatalf("outside victim changed: %q %v", data, err)
 				}
