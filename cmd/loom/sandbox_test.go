@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,11 +13,21 @@ import (
 
 var realHome string
 
+// realGoEnv is GOMODCACHE and GOCACHE as they were before the sandbox changed HOME: the tests that
+// run `go build` use them, so the build neither downloads modules into the sandbox (a read-only
+// tree the cleanup cannot remove) nor starts from a cold cache.
+var realGoEnv []string
+
 // TestMain points HOME and every XDG directory at a temp directory for the whole package, so
 // no test, whatever it forgets to override, can resolve to the real user directories (the
 // live installation's data directory is one of them).
 func TestMain(m *testing.M) {
 	realHome, _ = os.UserHomeDir()
+	for _, k := range []string{"GOMODCACHE", "GOCACHE"} {
+		if out, err := exec.Command("go", "env", k).Output(); err == nil { //nolint:gosec // fixed arguments
+			realGoEnv = append(realGoEnv, k+"="+strings.TrimSpace(string(out)))
+		}
+	}
 	dir, err := os.MkdirTemp("", "loom-test-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

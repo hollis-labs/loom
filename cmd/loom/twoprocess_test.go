@@ -48,7 +48,9 @@ func loomBinary(t *testing.T) string {
 			return
 		}
 		builtBin = filepath.Join(dir, "loom")
-		out, err := exec.Command("go", "build", "-o", builtBin, ".").CombinedOutput() //nolint:gosec // fixed arguments
+		build := exec.Command("go", "build", "-o", builtBin, ".") //nolint:gosec // fixed arguments
+		build.Env = append(os.Environ(), realGoEnv...)
+		out, err := build.CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("go build: %w\n%s", err, out)
 		}
