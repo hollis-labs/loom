@@ -28,10 +28,12 @@ The ported API serves all five (every route above is in the backend's table): no
   by `frontend.contributions` in the manifest; there is no client-side merge.
 - Pages (`src/pages/`): Bundles, Pages, Compile jobs, Exports, Directives. Same five views as before, built from
   design-components (`Card`, `Metric`, `Table`, `Textarea`, `SearchInput`, `Pill`, `EmptyState`).
-- Identity screens live in one directory, `src/identity/` (setup, sign-in, sign-out, session context), so the shared
-  identity kit and the shell's user menu can replace them whole when they ship.
+- Sign-in, the first-run (no owner) screen, account, access keys, active sessions and sign-out come from
+  `@hollis-labs/kit-identity` (`IdentityProvider`, `IdentityGate`, `IDENTITY_PAGES`, `ApiKeysPage`). They are four
+  `nav.footer` items in `cmd/loom/ui/app.json` (`/identity/account|keys|sessions|sign-out`). `src/identity/` is gone.
 - `src/api/request.ts` is a small `fetch` wrapper: cookie session, `X-Requested-With` on every call, the flat
-  `{code, message, details?}` error parsed into `ApiError`; a 401 that is not `invalid_login` returns to sign-in.
+  `{code, message, details?}` error parsed into `ApiError`; any 401 raises `loom:unauthorized`, which `App.tsx`
+  hands to the kit (`SessionLossBridge`) so it shows its "session expired" notice and returns to sign-in.
 - Removed: `src/api/auth*` (the shared bearer token and its prompt), the sysop-ui API client, `auth.test.mjs`,
   `GET /api/health`.
 
@@ -44,11 +46,12 @@ The ported API serves all five (every route above is in the backend's table): no
   `POST /api/setup` is always `403 setup_offline`; Loom never sets `setup_over_http`). With no owner the UI shows a
   plain screen with no form: create the owner on the host with `loom identity setup --username NAME`, then sign in.
   The setup form is gone.
-- Sign-in is the identity module's cookie session. On load the UI asks `GET /api/identity/profile`: a 401 means signed
-  out. A 429 on sign-in shows the server's message plus the `Retry-After` wait, in minutes.
-- Sign-in: the form is `aria-busy` and only the submit button is disabled while a request runs (disabling the
-  fieldset dropped keyboard focus); a failed sign-in moves focus to the announced error. A 401 (no session at load, or
-  one that ended) keeps the URL, so signing in again resumes the same page; only an explicit sign-out goes to `/`.
+- Sign-in is the kit's. A signed-out deep link survives sign-in (the URL is kept). An explicit sign-out leaves the URL
+  on `/identity/sign-out`; `initialPath()` in `App.tsx` replaces that with `/` so signing in again does not land on
+  the sign-out page.
+- Loom gained account (change password), access keys and active sessions screens; the old app had none. Key scopes
+  offered are `loom.read`, `loom.write`, `loom.mcp` (`scopeSuggestions`; the server has no scope catalogue and an
+  owner's `*` is not grantable by name).
 - Client URLs are real paths (`/pages`, `/jobs`, ...); the Go host's SPA fallback serves them.
 
 ## Gaps
@@ -62,10 +65,14 @@ The ported API serves all five (every route above is in the backend's table): no
 2. **`GET /api/identity/profile`** (Substrate bac8c60) is used on load: it answers the signed-in person or 401, and
    the display name is shown on the sign-out page. (On the first branch head it was `route_not_mapped`; the UI
    probed `GET /api/status` until the pin moved.)
-3. **No sign-out / user-menu region in app-shell**, so sign-out is a `nav.footer` page with one button (interim,
+3. **No sign-out / user-menu region in app-shell**, so account and sign-out are `nav.footer` items (interim,
    Basalisk's pattern; CW-20261112-0107).
-4. **Identity ships no UI** (setup, sign-in, password screens are app-owned until `@hollis-labs/kit-identity`).
-   Loom has no change-password, key or session screens: the old app had none and none was added.
+4. **kit-identity 0.1.0 (the BOM pin) gaps, seen in a real browser.** (a) After a reload `profile` is lost even though
+   the profile route exists: the badge and Account show "Identity unavailable". 0.1.1 fixes it (verified: Account
+   shows the person after reload); the BOM still pins 0.1.0, so this ships on 0.1.0 and moves with the BOM pin.
+   (b) After a failed sign-in, focus lands on `BODY` rather than the announced error (the PR #25 behaviour regressed).
+   (c) A 429 shows "too many attempts; wait a few minutes" without the `Retry-After` wait. (d) The sessions page shows
+   its title twice (shell frame plus page heading). (e) Not worked around; for the kit owner.
 5. **app-shell and design-bindings publish TypeScript source.** `tsconfig.json` needs `allowImportingTsExtensions`,
    Tailwind needs `@source "../node_modules/@hollis-labs/app-shell/src"` (app-shell has no `source.css`), and the dev
    server needs `optimizeDeps.esbuildOptions.jsx = "automatic"` or `ManifestShell` fails in dev with
@@ -96,6 +103,9 @@ the key routes, deep links and 390 px width.
 The owner is created on the host the way production does it: the server command runs `loom --no-project -db <db> identity setup`
 (password on stdin from a file in the temp directory) before the server starts. A second backend (port + 1,
 `LOOM_E2E_FRESH_PORT`) never gets an owner and backs the no-owner screen tests.
+
+Identity coverage: account page, key create (one-time value shown, then listed), sessions, session lost mid-use,
+deep link through sign-in, explicit sign-out.
 
 Environment: `LOOM_E2E_PORT` (default 8080, the manifest default), `LOOM_E2E_BIN` (default `../loom`),
 `LOOM_E2E_DIR` (default `$TMPDIR/loom-e2e-<port>`), `PLAYWRIGHT_CHANNEL` (default `chrome`, the system Chrome; no

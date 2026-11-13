@@ -1,12 +1,19 @@
 import { ManifestShell, type PageComponent } from "@hollis-labs/app-shell"
-import { Button } from "@hollis-labs/design-components"
-import { Braces, Briefcase, FileDown, Files, LogOut, ScrollText } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { ApiError, request, UNAUTHORIZED_EVENT } from "./api/request"
-import { Entry, SetupOffline } from "./identity/entry"
-import { Notice } from "./identity/forms"
-import { type Session, SessionContext } from "./identity/session"
-import { SignOutPage } from "./identity/signout"
+import { ApiKeysPage, IDENTITY_PAGES, IdentityGate } from "@hollis-labs/kit-identity"
+import { IdentityProvider, useIdentity } from "@hollis-labs/kit-identity/client"
+import {
+  Braces,
+  Briefcase,
+  FileDown,
+  Files,
+  KeyRound,
+  LogOut,
+  Monitor,
+  ScrollText,
+  Shield,
+} from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { UNAUTHORIZED_EVENT } from "./api/request"
 import { manifest } from "./manifest"
 import { BundlesPage } from "./pages/bundles"
 import { DirectivesPage } from "./pages/directives"
@@ -14,15 +21,21 @@ import { ExportsPage } from "./pages/exports"
 import { JobsPage } from "./pages/jobs"
 import { PagesPage } from "./pages/pages"
 
-// Kit icon names used by the contributions, resolved by the shell.
+// Kit icon names used by the contributions (cmd/loom/ui/app.json), resolved by the shell.
 const icons = {
   briefcase: Briefcase,
   files: Files,
   "scroll-text": ScrollText,
   "file-down": FileDown,
   braces: Braces,
+  shield: Shield,
+  "key-round": KeyRound,
+  monitor: Monitor,
   "log-out": LogOut,
 }
+
+// The server has no scope catalogue; these are the scopes Loom's routes check.
+const KEY_SCOPES = ["loom.read", "loom.write", "loom.mcp"]
 
 const pages: Record<string, PageComponent> = {
   bundles: () => <BundlesPage />,
@@ -30,11 +43,23 @@ const pages: Record<string, PageComponent> = {
   jobs: () => <JobsPage />,
   exports: () => <ExportsPage />,
   directives: () => <DirectivesPage />,
-  "sign-out": () => <SignOutPage />,
+  "identity-account": () => <IDENTITY_PAGES.account />,
+  "identity-keys": () => <ApiKeysPage scopeSuggestions={KEY_SCOPES} />,
+  "identity-sessions": () => <IDENTITY_PAGES.sessions />,
+  "identity-sign-out": () => <IDENTITY_PAGES.signOut />,
+}
+
+// An explicit sign-out leaves the URL on the sign-out page; signing in again must not land there.
+const SIGN_OUT_PATH = "/identity/sign-out"
+
+function initialPath() {
+  if (window.location.pathname !== SIGN_OUT_PATH) return window.location.pathname
+  window.history.replaceState(null, "", "/")
+  return "/"
 }
 
 function usePath() {
-  const [path, setPath] = useState(window.location.pathname)
+  const [path, setPath] = useState(initialPath)
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname)
     window.addEventListener("popstate", onPop)
@@ -47,76 +72,44 @@ function usePath() {
   return [path, navigate] as const
 }
 
-export function App() {
-  // null: not signed in; otherwise the signed-in person's display name.
-  const [name, setName] = useState<string | null>(null)
-  const [setup, setSetup] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [path, navigate] = usePath()
-  // A 401 (no session at load, or one that ended) keeps the path: signing in again resumes it.
-  const sessionEnded = useCallback(() => setName(null), [])
-  // An explicit sign-out goes home, so the next sign-in does not land on the sign-out page.
-  const signedOut = useCallback(() => {
-    setName(null)
-    navigate("/")
-  }, [navigate])
+/**
+ * The kit moves to its "session expired" sign-in when one of its own requests is answered 401.
+ * The app's own requests report the same fact through UNAUTHORIZED_EVENT; this asks the kit a
+ * question only a live session answers, so its 401 puts the gate on the sign-in screen.
+ */
+function SessionLossBridge() {
+  const { client } = useIdentity()
   useEffect(() => {
-    async function load() {
-      try {
-        const state = await request<{ setup_required: boolean }>("setup")
-        setSetup(state.setup_required)
-        if (!state.setup_required) {
-          try {
-            const me = await request<{ username: string; display_name?: string }>(
-              "identity/profile",
-            )
-            setName(me.display_name || me.username)
-          } catch (e) {
-            if (!(e instanceof ApiError && e.status === 401)) throw e
-          }
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not reach Loom.")
-      } finally {
-        setLoading(false)
-      }
-    }
-    void load()
-  }, [])
-  useEffect(() => {
-    window.addEventListener(UNAUTHORIZED_EVENT, sessionEnded)
-    return () => window.removeEventListener(UNAUTHORIZED_EVENT, sessionEnded)
-  }, [sessionEnded])
-  const session = useMemo<Session | null>(
-    () => (name === null ? null : { name, signedOut }),
-    [name, signedOut],
-  )
+    const onLoss = () => void client.listSessions().catch(() => {})
+    window.addEventListener(UNAUTHORIZED_EVENT, onLoss)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onLoss)
+  }, [client])
+  return null
+}
 
-  if (loading)
-    return (
-      <main className="entry-loading" role="status">
-        Opening Loom…
-      </main>
-    )
-  if (error && !session)
-    return (
-      <main className="entry-loading">
-        <Notice error={error} />
-        <Button onClick={() => window.location.reload()}>Try again</Button>
-      </main>
-    )
-  if (!session) return setup ? <SetupOffline /> : <Entry onReady={setName} />
+function Shell() {
+  const [path, navigate] = usePath()
   return (
-    <SessionContext.Provider value={session}>
-      <ManifestShell
-        manifest={manifest}
-        apiBase="/api"
-        path={path}
-        onNavigate={navigate}
-        pages={pages}
-        icons={icons}
-      />
-    </SessionContext.Provider>
+    <ManifestShell
+      manifest={manifest}
+      apiBase="/api"
+      path={path}
+      onNavigate={navigate}
+      pages={pages}
+      icons={icons}
+    />
+  )
+}
+
+export function App() {
+  return (
+    // The gate renders first-run, sign-in and the no-owner screen outside the shell and mounts
+    // the app only once a session exists.
+    <IdentityProvider>
+      <IdentityGate appName="loom">
+        <SessionLossBridge />
+        <Shell />
+      </IdentityGate>
+    </IdentityProvider>
   )
 }

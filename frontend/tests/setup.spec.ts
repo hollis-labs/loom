@@ -8,7 +8,7 @@ test.use({ storageState: signedOut, baseURL: freshBackend })
 test("no owner: a plain screen says how to create one, with no form", async ({ page }) => {
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "No owner yet" })).toBeVisible()
-  await expect(page.getByText("loom identity setup --username NAME")).toBeVisible()
+  await expect(page.getByText(/loom identity setup/)).toBeVisible()
   await expect(page.getByLabel("Username")).toHaveCount(0)
   await expect(page.getByLabel("Password")).toHaveCount(0)
 })

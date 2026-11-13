@@ -4,23 +4,18 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public code = "",
-    /** Seconds from the Retry-After header of a 429, when sent. */
-    public retryAfter = 0,
   ) {
     super(message)
   }
 }
 
-/** Codes where a 401 means "wrong credentials", not "your session ended". */
-const CREDENTIAL_CODES = new Set(["invalid_login"])
-
-/** Fired on a 401 that means the session ended; the app returns to the sign-in screen. */
+/** Fired on a 401: the session ended. The identity gate returns to its sign-in screen. */
 export const UNAUTHORIZED_EVENT = "loom:unauthorized"
 
 /**
  * JSON over the same-origin cookie session. Errors are the flat `{code, message, details?}` body.
  * Every request carries X-Requested-With, which the backend requires on cookie writes. An empty
- * body (204) resolves to undefined.
+ * body (204) resolves to undefined. Sign-in, setup and the identity screens are the kit's own.
  */
 export async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(`/api/${path}`, {
@@ -39,14 +34,11 @@ export async function request<T>(path: string, method = "GET", body?: unknown): 
     }
   }
   if (!response.ok) {
-    const code = data?.code ?? ""
-    if (response.status === 401 && !CREDENTIAL_CODES.has(code))
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    if (response.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
     throw new ApiError(
       data?.message || "The request could not be completed.",
       response.status,
-      code,
-      Number(response.headers.get("Retry-After")) || 0,
+      data?.code ?? "",
     )
   }
   return data as T
