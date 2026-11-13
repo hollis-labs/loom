@@ -68,10 +68,10 @@ The ported API serves all five (every route above is in the backend's table): no
    (On the first branch head it was `route_not_mapped`; the UI probed `GET /api/status` until the pin moved.)
 3. **No sign-out / user-menu region in app-shell**, so account and sign-out are `nav.footer` items (interim,
    Basalisk's pattern; CW-20261112-0107).
-4. **kit-identity 0.1.1 (the BOM pin) gaps, seen in a real browser.** (The 0.1.0 loss of the profile after a reload is fixed
-   in 0.1.1 and covered by a test.) (b) After a failed sign-in, focus lands on `BODY` rather than the announced error (the loom #25 behaviour regressed; kit task CW-20261113-0029; the test is kept as `test.fail`).
-   (c) A 429 shows "too many attempts; wait a few minutes" without the `Retry-After` wait (loom #25 regressed; CW-20261113-0030; `test.fail`). (d) The sessions page shows
-   its title twice (shell frame plus page heading; CW-20261113-0031, possibly CW-20261112-0134). (e) Not worked around; for the kit owner.
+4. **kit-identity 0.1.3 (the BOM pin).** The profile after a reload (0.1.1), focus on the error after a failed sign-in
+   (0.1.2) and the `Retry-After` wait on a 429 (0.1.3) are fixed in the kit and asserted by tests in a real browser. Still open:
+   the sessions page shows its title twice (shell frame plus page heading; CW-20261113-0031, waits on CW-20261112-0134).
+   Not worked around.
 5. **app-shell and design-bindings publish TypeScript source.** `tsconfig.json` needs `allowImportingTsExtensions`,
    Tailwind needs `@source "../node_modules/@hollis-labs/app-shell/src"` (app-shell has no `source.css`), and the dev
    server needs `optimizeDeps.esbuildOptions.jsx = "automatic"` or `ManifestShell` fails in dev with

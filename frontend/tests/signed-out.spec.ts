@@ -35,28 +35,7 @@ test("sign-in opens the shell, a reload keeps the session, sign-out returns", as
   await expect(signInHeading(page)).toBeVisible()
 })
 
-test("too many wrong passwords: the server's rate-limit message is shown", async ({ page }) => {
-  const api = await ownerApi()
-  const made = await api.post("/api/identity/users", {
-    data: {
-      username: "limited",
-      display_name: "Limited",
-      password: "yet another long passphrase",
-      scopes: ["loom.read"],
-    },
-  })
-  expect(made.status()).toBe(201)
-  await api.dispose()
-  for (let i = 0; i < 6; i++) {
-    await signIn(page, "limited", "wrong wrong wrong")
-    await expect(page.getByRole("alert")).toBeVisible()
-  }
-  await expect(page.getByRole("alert")).toContainText(/too many attempts/i)
-})
-
-// Expected failure until the kit shows the Retry-After wait (loom #25 had this; kit task CW-20261113-0030).
 test("too many wrong passwords: the 429 message says when to try again", async ({ page }) => {
-  test.fail(true, "CW-20261113-0030: kit-identity shows no Retry-After wait")
   const api = await ownerApi()
   const made = await api.post("/api/identity/users", {
     data: {
@@ -75,12 +54,7 @@ test("too many wrong passwords: the 429 message says when to try again", async (
   await expect(page.getByRole("alert")).toContainText(/try again in \d+ minute/i)
 })
 
-// Expected failure until the kit moves focus to the error (loom #25 had this; kit task CW-20261113-0029).
 test("a failed sign-in moves focus to the error", async ({ page }) => {
-  test.fail(
-    true,
-    "CW-20261113-0029: kit-identity leaves focus on the page body after a failed sign-in",
-  )
   await page.goto("/")
   await page.getByLabel("Username").fill(ownerName)
   await page.getByLabel("Password").fill("wrong wrong wrong")
