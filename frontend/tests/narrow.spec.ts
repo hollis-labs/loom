@@ -5,7 +5,17 @@ import { owner } from "./helpers"
 // content gets about 150px at 390px. The pages must still not overflow the viewport.
 test.use({ storageState: owner, viewport: { width: 390, height: 800 } })
 
-for (const path of ["/", "/pages", "/jobs", "/exports", "/directives", "/sign-out"]) {
+for (const path of [
+  "/",
+  "/pages",
+  "/jobs",
+  "/exports",
+  "/directives",
+  "/identity/account",
+  "/identity/keys",
+  "/identity/sessions",
+  "/identity/sign-out",
+]) {
   test(`390px wide: ${path} does not overflow horizontally`, async ({ page }) => {
     await page.goto(path)
     await expect(page.getByRole("link", { name: "Compile jobs" })).toBeVisible()

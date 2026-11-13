@@ -48,7 +48,8 @@ The ported API serves all five (every route above is in the backend's table): no
   The setup form is gone.
 - Sign-in is the kit's. A signed-out deep link survives sign-in (the URL is kept). An explicit sign-out leaves the URL
   on `/identity/sign-out`; `initialPath()` in `App.tsx` replaces that with `/` so signing in again does not land on
-  the sign-out page.
+  the sign-out page. The interim `/sign-out` path of the first port is gone (it now serves the unknown-path page);
+  the old app had no router, so nothing outside Loom links to it.
 - Loom gained account (change password), access keys and active sessions screens; the old app had none. Key scopes
   offered are `loom.read`, `loom.write`, `loom.mcp` (`scopeSuggestions`; the server has no scope catalogue and an
   owner's `*` is not grantable by name).
@@ -62,9 +63,9 @@ The ported API serves all five (every route above is in the backend's table): no
    backend setting, in the `SUBSTRATE_CONFIG` file used for development):
    `identity: { allowed_origins: ["http://127.0.0.1:<vite port>"] }`. The built, embedded UI is same-origin and needs
    nothing. Decision for the driver: document this in `docs/conversion-notes.md`, or ship a dev override.
-2. **`GET /api/identity/profile`** (Substrate bac8c60) is used on load: it answers the signed-in person or 401, and
-   the display name is shown on the sign-out page. (On the first branch head it was `route_not_mapped`; the UI
-   probed `GET /api/status` until the pin moved.)
+2. **`GET /api/identity/profile`** (Substrate bac8c60) is read by kit-identity 0.1.1 on boot (the app no
+   longer calls it): it answers the signed-in person or 401, so the Account page shows the person after a reload.
+   (On the first branch head it was `route_not_mapped`; the UI probed `GET /api/status` until the pin moved.)
 3. **No sign-out / user-menu region in app-shell**, so account and sign-out are `nav.footer` items (interim,
    Basalisk's pattern; CW-20261112-0107).
 4. **kit-identity 0.1.1 (the BOM pin) gaps, seen in a real browser.** (The 0.1.0 loss of the profile after a reload is fixed
