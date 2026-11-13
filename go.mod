@@ -10,7 +10,7 @@ require (
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.6.0
 	github.com/hollis-labs/libs/security/auth v0.3.1
 	github.com/hollis-labs/libs/ui/ui-go v0.1.0
-	github.com/hollis-labs/substrate v0.1.1-0.20261113201120-628daf0f1412
+	github.com/hollis-labs/substrate v0.1.1-0.20261113215142-c224093ac441
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	go.opentelemetry.io/otel v1.47.0

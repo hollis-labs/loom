@@ -23,7 +23,7 @@
     "@hollis-labs/design-tokens": "0.5.0",
     "@hollis-labs/kit-account": "0.3.0",
     "@hollis-labs/kit-dashboard": "0.6.2",
-    "@hollis-labs/kit-identity": "0.1.1",
+    "@hollis-labs/kit-identity": "0.1.3",
     "@hollis-labs/plugin-host-ui": "0.3.0",
     "lucide-react": "1.52.0",
     "react": "19.3.0",
