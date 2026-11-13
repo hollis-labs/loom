@@ -70,9 +70,9 @@ The ported API serves all five (every route above is in the backend's table): no
 4. **kit-identity 0.1.0 (the BOM pin) gaps, seen in a real browser.** (a) After a reload `profile` is lost even though
    the profile route exists: the badge and Account show "Identity unavailable". 0.1.1 fixes it (verified: Account
    shows the person after reload); the BOM still pins 0.1.0, so this ships on 0.1.0 and moves with the BOM pin.
-   (b) After a failed sign-in, focus lands on `BODY` rather than the announced error (the PR #25 behaviour regressed).
-   (c) A 429 shows "too many attempts; wait a few minutes" without the `Retry-After` wait. (d) The sessions page shows
-   its title twice (shell frame plus page heading). (e) Not worked around; for the kit owner.
+   (b) After a failed sign-in, focus lands on `BODY` rather than the announced error (the loom #25 behaviour regressed; kit task CW-20261113-0029; the test is kept as `test.fail`).
+   (c) A 429 shows "too many attempts; wait a few minutes" without the `Retry-After` wait (loom #25 regressed; CW-20261113-0030; `test.fail`). (d) The sessions page shows
+   its title twice (shell frame plus page heading; CW-20261113-0031, possibly CW-20261112-0134). (e) Not worked around; for the kit owner.
 5. **app-shell and design-bindings publish TypeScript source.** `tsconfig.json` needs `allowImportingTsExtensions`,
    Tailwind needs `@source "../node_modules/@hollis-labs/app-shell/src"` (app-shell has no `source.css`), and the dev
    server needs `optimizeDeps.esbuildOptions.jsx = "automatic"` or `ManifestShell` fails in dev with
