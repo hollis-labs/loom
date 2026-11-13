@@ -69,6 +69,11 @@
           "scope": "authenticated"
         },
         {
+          "method": "GET",
+          "path": "/api/identity/profile",
+          "scope": "authenticated"
+        },
+        {
           "method": "PUT",
           "path": "/api/identity/profile",
           "scope": "authenticated"
@@ -121,6 +126,16 @@
         {
           "method": "POST",
           "path": "/api/identity/pairing-codes",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "POST",
+          "path": "/api/identity/signing-key/rotate",
+          "scope": "{app}.admin"
+        },
+        {
+          "method": "GET",
+          "path": "/api/identity/signing-key",
           "scope": "{app}.admin"
         }
       ]
@@ -211,17 +226,65 @@
         },
         {
           "kind": "nav.item",
-          "key": "sign-out",
-          "label": "Sign out",
-          "icon": "log-out",
+          "key": "identity-account",
+          "label": "Account security",
+          "icon": "shield",
           "region": "nav.footer",
-          "route": "/sign-out"
+          "route": "/identity/account"
         },
         {
           "kind": "surface",
-          "key": "sign-out",
+          "key": "identity-account",
+          "label": "Account security",
+          "route": "/identity/account",
+          "layout": "form",
+          "title": "Account security"
+        },
+        {
+          "kind": "nav.item",
+          "key": "identity-keys",
+          "label": "Access keys",
+          "icon": "key-round",
+          "region": "nav.footer",
+          "route": "/identity/keys"
+        },
+        {
+          "kind": "surface",
+          "key": "identity-keys",
+          "label": "Access keys",
+          "route": "/identity/keys",
+          "layout": "list",
+          "title": "Access keys"
+        },
+        {
+          "kind": "nav.item",
+          "key": "identity-sessions",
+          "label": "Active sessions",
+          "icon": "monitor",
+          "region": "nav.footer",
+          "route": "/identity/sessions"
+        },
+        {
+          "kind": "surface",
+          "key": "identity-sessions",
+          "label": "Active sessions",
+          "route": "/identity/sessions",
+          "layout": "list",
+          "title": "Active sessions"
+        },
+        {
+          "kind": "nav.item",
+          "key": "identity-sign-out",
           "label": "Sign out",
-          "route": "/sign-out",
+          "icon": "log-out",
+          "region": "nav.footer",
+          "route": "/identity/sign-out"
+        },
+        {
+          "kind": "surface",
+          "key": "identity-sign-out",
+          "label": "Sign out",
+          "route": "/identity/sign-out",
           "layout": "form",
           "title": "Sign out"
         }
@@ -302,6 +365,78 @@
       "module": "loom"
     },
     {
+      "kind": "nav.item",
+      "key": "identity-account",
+      "label": "Account security",
+      "icon": "shield",
+      "region": "nav.footer",
+      "route": "/identity/account",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "identity-account",
+      "label": "Account security",
+      "route": "/identity/account",
+      "layout": "form",
+      "title": "Account security",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "identity-keys",
+      "label": "Access keys",
+      "icon": "key-round",
+      "region": "nav.footer",
+      "route": "/identity/keys",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "identity-keys",
+      "label": "Access keys",
+      "route": "/identity/keys",
+      "layout": "list",
+      "title": "Access keys",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "identity-sessions",
+      "label": "Active sessions",
+      "icon": "monitor",
+      "region": "nav.footer",
+      "route": "/identity/sessions",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "identity-sessions",
+      "label": "Active sessions",
+      "route": "/identity/sessions",
+      "layout": "list",
+      "title": "Active sessions",
+      "module": "loom"
+    },
+    {
+      "kind": "nav.item",
+      "key": "identity-sign-out",
+      "label": "Sign out",
+      "icon": "log-out",
+      "region": "nav.footer",
+      "route": "/identity/sign-out",
+      "module": "loom"
+    },
+    {
+      "kind": "surface",
+      "key": "identity-sign-out",
+      "label": "Sign out",
+      "route": "/identity/sign-out",
+      "layout": "form",
+      "title": "Sign out",
+      "module": "loom"
+    },
+    {
       "kind": "surface",
       "key": "jobs",
       "label": "Compile jobs",
@@ -317,24 +452,6 @@
       "route": "/pages",
       "layout": "list",
       "title": "Pages",
-      "module": "loom"
-    },
-    {
-      "kind": "nav.item",
-      "key": "sign-out",
-      "label": "Sign out",
-      "icon": "log-out",
-      "region": "nav.footer",
-      "route": "/sign-out",
-      "module": "loom"
-    },
-    {
-      "kind": "surface",
-      "key": "sign-out",
-      "label": "Sign out",
-      "route": "/sign-out",
-      "layout": "form",
-      "title": "Sign out",
       "module": "loom"
     }
   ],
@@ -384,6 +501,12 @@
     {
       "method": "PUT",
       "path": "/api/password",
+      "scope": "authenticated",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/profile",
       "scope": "authenticated",
       "module": "identity"
     },
@@ -452,13 +575,25 @@
       "path": "/api/identity/pairing-codes",
       "scope": "{app}.admin",
       "module": "identity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/identity/signing-key/rotate",
+      "scope": "{app}.admin",
+      "module": "identity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity/signing-key",
+      "scope": "{app}.admin",
+      "module": "identity"
     }
   ],
   "regions": [],
   "kits": [
     {
       "name": "@hollis-labs/design-app-runtime",
-      "version": "0.5.0"
+      "version": "0.6.0"
     },
     {
       "name": "@hollis-labs/design-components",
