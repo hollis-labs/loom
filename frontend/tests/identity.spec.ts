@@ -10,6 +10,14 @@ test("account security: the change-password form is there", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Change password" })).toBeVisible()
 })
 
+test("account: the signed-in person survives a reload (kit reads the profile)", async ({
+  page,
+}) => {
+  await page.goto("/identity/account")
+  await page.reload()
+  await expect(page.getByText("E2E Owner").first()).toBeVisible()
+})
+
 test("access keys: the owner creates a key, sees it once, and it is listed", async ({ page }) => {
   await page.goto("/identity/keys")
   await expect(page.getByRole("heading", { name: "Access keys" })).toBeVisible()
