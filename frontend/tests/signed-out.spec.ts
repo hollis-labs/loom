@@ -52,6 +52,7 @@ test("too many wrong passwords: the 429 message says when to try again", async (
     await expect(page.getByRole("alert")).toBeVisible()
   }
   await expect(page.getByRole("alert")).toContainText(/try again in \d+ minute/i)
+  await expect(page.getByRole("alert")).toContainText(/too many attempts/i)
 })
 
 test("a failed sign-in moves focus to the error", async ({ page }) => {
