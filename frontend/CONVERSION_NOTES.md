@@ -68,7 +68,7 @@ The ported API serves all five (every route above is in the backend's table): no
    (On the first branch head it was `route_not_mapped`; the UI probed `GET /api/status` until the pin moved.)
 3. **No sign-out / user-menu region in app-shell**, so account and sign-out are `nav.footer` items (interim,
    Basalisk's pattern; CW-20261112-0107).
-4. **kit-identity 0.1.3 (the BOM pin).** The profile after a reload (0.1.1), focus on the error after a failed sign-in
+4. **kit-identity 0.1.4 (the BOM pin).** The profile after a reload (0.1.1), focus on the error after a failed sign-in
    (0.1.2) and the `Retry-After` wait on a 429 (0.1.3) are fixed in the kit and asserted by tests in a real browser. Still open:
    the sessions page shows its title twice (shell frame plus page heading; CW-20261113-0031, waits on CW-20261112-0134).
    Not worked around.
